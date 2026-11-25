@@ -9,7 +9,11 @@ import {
   resizeDimensions,
   localContours,
 } from './vector.js';
-import { appendVertexOverlay, strokePanel } from './vector-view.js';
+import {
+  appendVertexOverlay,
+  strokePanel,
+  vectorDrawing,
+} from './vector-view.js';
 import { anchorAt, refreshCommentPositions } from './comment-anchors.js';
 import {
   alignments,
@@ -17,7 +21,8 @@ import {
   bindLayerReordering,
   reorderLayers,
 } from './arrange.js';
-import { chooseColor } from './color-dialog.js';
+import { chooseColor, closeColorPicker } from './color-dialog.js';
+import { documentColors } from './paint.js';
 import { objectClipboard } from './object-clipboard.js';
 import {
   captureClipboardMedia,
@@ -633,8 +638,71 @@ function layerAction(action, id) {
 }
 const field = (label, key, value, min, max, scope = 'object') =>
   `<label class="field">${label}<input aria-label="${label}" type="number" step="any" data-scope="${scope}" data-field="${key}" value="${Number((Number(value) * dimension(key)).toFixed(2))}" min="${min * dimension(key)}" max="${max * dimension(key)}"></label>`;
+const paintLabel = (color) => {
+  if (!color) return 'None';
+  const opacity =
+    color.length === 9
+      ? ' · ' + Math.round((parseInt(color.slice(7), 16) * 100) / 255) + '%'
+      : '';
+  return color.slice(1, 7).toUpperCase() + opacity;
+};
 const swatch = (label, col, key) =>
-  `<div class="property"><span>${esc(label)}</span><button type="button" class="swatch" aria-label="${esc(label)}" data-color="${key}" data-value="${esc(col || '')}"><i style="background:${esc(col || 'transparent')}"></i>${col ? esc(col.slice(1).toUpperCase()) : 'None'}</button></div>`;
+  `<div class="property"><span>${esc(label)}</span><button type="button" class="swatch" aria-haspopup="dialog" aria-label="${esc(label)}" data-color="${key}" data-value="${esc(col || '')}"><i style="background:${esc(col || 'transparent')}"></i><span>${esc(paintLabel(col))}</span></button></div>`;
+function editPaint(button) {
+  const key = button.dataset.color,
+    slide = active(),
+    target = key === 'bg' ? slide : selected();
+  if (!target || (key !== 'bg' && selectedEntries().some((e) => e.locked)))
+    return;
+  const styles = [target];
+  if (key === 'color')
+    for (const p of target.paragraphs || []) styles.push(p.base, ...p.runs);
+  let before;
+  chooseColor(button, {
+    colors: documentColors(deck, active()),
+    allowNone: key === 'fill' || key === 'stroke',
+    onPreview(value) {
+      if (styles.every((style) => (style[key] ?? null) === value)) return;
+      before ??= snapshot();
+      for (const style of styles) style[key] = value;
+      button.dataset.value = value || '';
+      button.querySelector('i').style.background = value || 'transparent';
+      button.querySelector('span').textContent = paintLabel(value);
+      if (key === 'bg') $('.artboard > .scene').style.background = value;
+      else {
+        const node = $('.artboard [data-id="' + CSS.escape(target.id) + '"]');
+        if (key === 'color') {
+          node
+            ?.querySelectorAll('.item-text,.item-text div,.item-text span')
+            .forEach((n) => {
+              n.style.color = value;
+            });
+        } else if (node) {
+          const geometry = node.querySelector(':scope > .geometry');
+          if (target.kind === 'text' && !target.fill && !target.stroke)
+            geometry?.remove();
+          else {
+            const next = vectorDrawing(target, true);
+            if (geometry) geometry.replaceWith(next);
+            else node.prepend(next);
+          }
+        }
+      }
+    },
+    onCommit() {
+      if (!before) return;
+      if (before.deck !== JSON.stringify(deck) && !editor?.creation)
+        record(before);
+      before = null;
+      renderThumbs();
+    },
+    onUndo(redo) {
+      finishText();
+      restore(redo ? future : history, redo ? history : future);
+    },
+  });
+}
+
 const alignControls = () =>
   '<div class="object-alignment" role="group" aria-label="Object alignment">' +
   alignments
@@ -1137,7 +1205,7 @@ document.addEventListener(
     }
     if (
       e.target.closest(
-        '[data-font],[data-line-spacing],[data-field="letterSpacing"],[data-field="size"],[data-color="color"],[data-action="bold"],[data-action="italic"],[data-action^="align"],dialog'
+        '[data-font],[data-line-spacing],[data-field="letterSpacing"],[data-field="size"],[data-color],[data-action="bold"],[data-action="italic"],[data-action^="align"],dialog'
       )
     ) {
       editor.remember();
@@ -1662,6 +1730,7 @@ async function showPresentation(on) {
   } catch {}
 }
 async function execute(id, button) {
+  closeColorPicker();
   if (busy || document.querySelector('dialog[open]')) return;
   const sectionId = $('.menu')?.dataset.sectionId;
   if (id === 'renameSection' || id === 'removeSection') {
@@ -1970,20 +2039,7 @@ document.addEventListener('click', (e) => {
   if (busy || e.target.closest('dialog')) return;
   const swatchButton = e.target.closest('button[data-color]');
   if (swatchButton) {
-    const key = swatchButton.dataset.color;
-    chooseColor(
-      swatchButton.getAttribute('aria-label'),
-      swatchButton.dataset.value,
-      (value) => {
-        if (key === 'bg') {
-          if (active().bg?.toUpperCase() !== value)
-            change(() => {
-              active().bg = value;
-            });
-        } else if (selected()?.[key]?.toUpperCase() !== value)
-          updateObject(key, value);
-      }
-    );
+    editPaint(swatchButton);
     return;
   }
   const b = e.target.closest('[data-action]');

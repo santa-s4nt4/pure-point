@@ -169,6 +169,16 @@ fn finish_quit(app: AppHandle, state: State<Documents>) {
     state.dirty.store(false, Ordering::SeqCst);
     app.exit(0);
 }
+#[tauri::command]
+async fn sample_screen_color() -> Result<Option<String>, String> {
+    extern "C" {
+        fn pp_sample_screen_color() -> i32;
+    }
+    let rgb = tauri::async_runtime::spawn_blocking(|| unsafe { pp_sample_screen_color() })
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok((rgb >= 0).then(|| format!("#{rgb:06X}")))
+}
 fn main() {
     tauri::Builder::default()
         .manage(Documents::default())
@@ -230,6 +240,7 @@ fn main() {
             release_document,
             save_document,
             system_fonts,
+            sample_screen_color,
             fonts::font_data,
             player::youtube_player_url,
             movies::pick_movie,

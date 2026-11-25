@@ -73,10 +73,21 @@ export const rels = (pairs) =>
   `<Relationships xmlns="${PKG}">${pairs.map(([id, type, target]) => `<Relationship Id="${id}" Type="${R}/${type}" Target="${esc(target)}"/>`).join('')}</Relationships>`;
 export const treeStart =
   '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>';
-export const solid = (hex) =>
-  hex
-    ? `<a:solidFill><a:srgbClr val="${hex.slice(1)}"/></a:solidFill>`
-    : '<a:noFill/>';
+export function solid(hex) {
+  if (!hex) return '<a:noFill/>';
+  const rgb = hex.slice(1, 7);
+  if (hex.length === 7)
+    return `<a:solidFill><a:srgbClr val="${rgb}"/></a:solidFill>`;
+  const alpha = parseInt(hex.slice(7, 9), 16),
+    percent = Math.round((alpha * 100) / 255);
+  // Recover whole percentages entered in the picker whenever the byte represents one.
+  const amount =
+    Math.round((percent * 255) / 100) === alpha
+      ? percent * 1000
+      : Math.round((alpha * 100000) / 255);
+  return `<a:solidFill><a:srgbClr val="${rgb}"><a:alpha val="${amount}"/></a:srgbClr></a:solidFill>`;
+}
+
 export const emu = (n) => Math.round(n * 12700);
 export const rawSlide = (name, bg, content = '') =>
   `<p:sld ${ns}><p:cSld name="${esc(name)}"><p:bg><p:bgPr>${solid(bg)}<a:effectLst/></p:bgPr></p:bg><p:spTree>${treeStart}${content}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`;

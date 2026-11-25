@@ -31,6 +31,7 @@ const colors = [
   '354AE8',
   '7457A7',
 ];
+export const defaultThemeColors = colors.map((hex) => '#' + hex);
 const fill = '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>';
 const fontGroup = (n) =>
   `<a:${n}><a:latin typeface="Helvetica Neue"/><a:ea typeface="Hiragino Sans"/><a:cs typeface="Arial"/></a:${n}>`;

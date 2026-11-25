@@ -46,8 +46,15 @@ function color(node, theme, fallback = null) {
   else if (n.localName !== 'srgbClr') return fallback;
   if (!/^[a-f\d]{6}$/i.test(value || '')) return fallback;
   let channels = [0, 2, 4].map((i) => parseInt(value.slice(i, i + 2), 16));
+  let alpha = 1;
   for (const mod of children(n)) {
-    const amount = Number(attr(mod, 'val')) / 100000;
+    const raw = attr(mod, 'val');
+    const amount = raw.endsWith('%')
+      ? parseFloat(raw) / 100
+      : Number(raw) / 100000;
+    if (mod.localName === 'alpha') alpha = amount;
+    if (mod.localName === 'alphaMod') alpha *= amount;
+    if (mod.localName === 'alphaOff') alpha += amount;
     if (mod.localName === 'tint' || mod.localName === 'lumOff')
       channels = channels.map((c) =>
         mod.localName === 'tint' ? 255 - (255 - c) * amount : c + 255 * amount
@@ -64,9 +71,16 @@ function color(node, theme, fallback = null) {
           .padStart(2, '0')
       )
       .join('')
-      .toUpperCase()
+      .toUpperCase() +
+    (alpha < 1
+      ? Math.round(Math.max(0, alpha) * 255)
+          .toString(16)
+          .padStart(2, '0')
+          .toUpperCase()
+      : '')
   );
 }
+
 function themeFor(theme, master, layout, page) {
   const result = {
     colors: {},
@@ -418,6 +432,9 @@ export function readSlidePage({
   const s = {
     ...slide(name, bg, items),
     layoutPath,
+    themeColors: Object.values(theme.colors)
+      .filter((v) => /^[\da-f]{6}$/i.test(v))
+      .map((v) => '#' + v),
   };
   for (const [tree, path, show] of [
     [

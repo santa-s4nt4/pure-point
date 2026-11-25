@@ -1,0 +1,245 @@
+.color-dialog {
+  position: fixed;
+  inset: auto;
+  z-index: 150;
+  margin: 0;
+  padding: 0;
+  width: 240px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  color: #262629;
+  font:
+    12px/1.3 -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  background: white;
+  border: 1px solid #0002;
+  border-radius: 10px;
+  box-shadow:
+    0 7px 26px #18182029,
+    0 2px 5px #1818200f;
+  outline: 0;
+}
+.color-dialog button,
+.color-dialog select {
+  font: inherit;
+  color: inherit;
+}
+.paint-header {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 9px 0 12px;
+}
+.paint-header select,
+.paint-values select,
+.paint-palette select {
+  width: auto;
+  max-width: 100%;
+  background-color: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 3px 2px;
+}
+.paint-header select,
+.paint-type {
+  font-weight: 600;
+}
+.paint-close,
+.paint-dropper {
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  padding: 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.paint-close:hover,
+.paint-dropper:hover {
+  background: #f1f1f3;
+}
+.paint-sv {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  max-height: max(100px, calc(100dvh - 235px));
+  overflow: hidden;
+  touch-action: none;
+  cursor: crosshair;
+  background:
+    linear-gradient(to top, #000, transparent),
+    linear-gradient(to right, #fff, transparent), hsl(var(--hue) 100% 50%);
+}
+.paint-sv i {
+  position: absolute;
+  pointer-events: none;
+  width: 13px;
+  height: 13px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 2px solid white;
+  background: var(--rgb);
+  box-shadow:
+    0 0 0 1px #0005,
+    0 1px 3px #0005;
+}
+.paint-sv:focus-visible {
+  outline: 2px solid #007aff;
+  outline-offset: -2px;
+}
+.paint-adjust {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 12px 10px;
+}
+.paint-sliders {
+  display: grid;
+  gap: 9px;
+  flex: 1;
+}
+.paint-sliders input {
+  width: 100%;
+  display: block;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  border: 0;
+  height: 10px;
+  border-radius: 8px;
+  padding: 0;
+  margin: 0;
+}
+.paint-hue {
+  background: linear-gradient(
+    to right,
+    #f00,
+    #ff0,
+    #0f0,
+    #0ff,
+    #00f,
+    #f0f,
+    #f00
+  );
+}
+.paint-checks,
+.paint-sample {
+  background-color: white;
+  background-image: conic-gradient(
+    #d6d6d9 25%,
+    transparent 0 50%,
+    #d6d6d9 0 75%,
+    transparent 0
+  );
+  background-size: 8px 8px;
+}
+.paint-checks {
+  border-radius: 5px;
+}
+.paint-alpha {
+  background: linear-gradient(to right, transparent, var(--rgb));
+}
+.paint-sliders input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow:
+    0 0 0 1px #0006,
+    0 1px 3px #0004;
+}
+.paint-values {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 12px 12px;
+}
+.paint-values input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  color: inherit;
+  text-align: center;
+  background: #f2f2f4;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font:
+    11px/22px -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  outline: none;
+}
+.paint-values input:focus {
+  border-color: #635ff0;
+}
+.paint-channels {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.paint-values select {
+  font-size: 11px;
+}
+.paint-percent {
+  width: 44px;
+  display: flex;
+  align-items: center;
+  background: #f2f2f4;
+  border-radius: 4px;
+  position: relative;
+}
+.paint-percent input {
+  padding-right: 12px;
+}
+.paint-percent span {
+  position: absolute;
+  right: 5px;
+  font-size: 10px;
+  pointer-events: none;
+  color: #68686b;
+}
+.paint-palette {
+  border-top: 1px solid #e5e5e7;
+  padding: 8px 12px 12px;
+}
+.paint-palette select {
+  font-weight: 550;
+}
+.paint-swatches {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 5px;
+  max-height: 80px;
+  overflow: auto;
+  margin-top: 6px;
+}
+.paint-sample {
+  position: relative;
+  overflow: hidden;
+  border-radius: 3px;
+  border: 0;
+  padding: 0;
+  aspect-ratio: 1;
+  cursor: pointer;
+}
+.paint-sample::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--sample);
+  box-shadow: inset 0 0 0 1px #0002;
+  border-radius: inherit;
+}
+.paint-swatches small {
+  grid-column: 1/-1;
+  color: #757579;
+}
+.paint-dropper[hidden] {
+  display: none;
+}
