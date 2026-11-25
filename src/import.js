@@ -1,3 +1,4 @@
+import { readContours, readLineStyle } from './vector-xml.js';
 import { readDocumentMetadata } from './document-metadata.js';
 import { readLayerFlags } from './layer-xml.js';
 import { readPictureMedia } from './media-xml.js';
@@ -106,6 +107,9 @@ function fontName(n, theme) {
 }
 function textStyle(n, fallback, theme) {
   return {
+    letterSpacing: n?.hasAttribute('spc')
+      ? Number(attr(n, 'spc')) / 100
+      : fallback.letterSpacing || 0,
     eastAsianFont: fontName(child(n, 'ea'), theme) || fallback.eastAsianFont,
     font:
       fontName(child(n, 'latin'), theme) ||
@@ -139,33 +143,6 @@ function matchPlaceholder(node, tree) {
     candidates.find((n) => attr(desc(n, 'ph'), 'type', 'obj') === type)
   );
 }
-function readPaths(custom) {
-  const paths = [];
-  for (const path of children(child(custom, 'pathLst'), 'path')) {
-    const w = Number(attr(path, 'w')),
-      h = Number(attr(path, 'h'));
-    let pts = [];
-    if (!w || !h) return;
-    for (const cmd of children(path)) {
-      if (cmd.localName === 'close') {
-        if (pts.length) pts.push(pts[0]);
-        continue;
-      }
-      if (!['moveTo', 'lnTo'].includes(cmd.localName)) return;
-      if (cmd.localName === 'moveTo' && pts.length) {
-        paths.push(pts);
-        pts = [];
-      }
-      const p = child(cmd, 'pt'),
-        x = Number(attr(p, 'x')),
-        y = Number(attr(p, 'y'));
-      if (!Number.isFinite(x + y)) return;
-      pts.push([(x / w) * 1000, (y / h) * 1000]);
-    }
-    if (pts.length) paths.push(pts);
-  }
-  return paths.length ? paths : undefined;
-}
 function readShape(n, ctx, index, layer, master) {
   if (['nvGrpSpPr', 'grpSpPr', 'extLst'].includes(n.localName)) return null;
   const styles = [n, layer, master].filter(Boolean);
@@ -179,7 +156,10 @@ function readShape(n, ctx, index, layer, master) {
     name = attr(info, 'name', 'Object');
   const geom = attr(first(...props.map((p) => child(p, 'prstGeom'))), 'prst');
   const body = child(n, 'txBody');
-  const paths = readPaths(child(props[0], 'custGeom'));
+  const contours = readContours(child(props[0], 'custGeom'), {
+    w: Number(attr(ext, 'cx')),
+    h: Number(attr(ext, 'cy')),
+  });
   let kind =
     n.localName === 'sp' &&
     ['1', 'true'].includes(attr(desc(n, 'cNvSpPr'), 'txBox'))
@@ -190,7 +170,7 @@ function readShape(n, ctx, index, layer, master) {
           ? 'group'
           : n.localName === 'graphicFrame'
             ? 'unsupported'
-            : paths
+            : contours
               ? 'path'
               : {
                   rect: 'rect',
@@ -204,6 +184,13 @@ function readShape(n, ctx, index, layer, master) {
                   : body && !geom
                     ? 'text'
                     : 'unsupported');
+  const ln = child(props[0], 'ln'),
+    lnRef = child(child(n, 'style'), 'lnRef');
+  const defaultStroke = kind === 'line' ? '#222521' : null;
+  const inheritedStroke =
+    Number(attr(lnRef, 'idx')) > 0
+      ? color(lnRef, ctx.theme, defaultStroke)
+      : defaultStroke;
   const obj = shape(
     kind,
     name,
@@ -225,9 +212,14 @@ function readShape(n, ctx, index, layer, master) {
           ? null
           : color(desc(child(n, 'style'), 'fillRef'), ctx.theme)
       ),
-      stroke: color(child(child(props[0], 'ln'), 'solidFill'), ctx.theme),
-      strokeWidth: points(child(props[0], 'ln'), 'w', 1),
-      ...(paths ? { paths } : {}),
+      stroke: color(
+        child(ln, 'solidFill'),
+        ctx.theme,
+        child(ln, 'noFill') ? null : inheritedStroke
+      ),
+      strokeWidth: points(ln, 'w', 1),
+      ...(contours ? { contours } : {}),
+      ...readLineStyle(ln),
     }
   );
   const table = n.localName === 'graphicFrame' && desc(n, 'tbl');
@@ -260,6 +252,16 @@ function readShape(n, ctx, index, layer, master) {
       .filter(Boolean);
   }
   if (body) {
+    const ph = desc(child(n, 'nvSpPr'), 'ph');
+    if (ph) {
+      obj.placeholder = Object.fromEntries(
+        [...ph.attributes].map((a) => [a.name, a.value])
+      );
+      if (kind === 'rect' || kind === 'unsupported') obj.kind = 'text';
+    }
+    obj.autoWidth =
+      attr(child(body, 'bodyPr'), 'wrap') === 'none' &&
+      Boolean(child(child(body, 'bodyPr'), 'spAutoFit'));
     const bodies = styles.map((s) => child(s, 'txBody'));
     const bps = bodies.map((b) => child(b, 'bodyPr'));
     obj.inset = ['lIns', 'tIns', 'rIns', 'bIns'].map((k, i) =>
@@ -336,7 +338,7 @@ function readShape(n, ctx, index, layer, master) {
       const lineHeight = child(ls, 'spcPts')
         ? Number(attr(child(ls, 'spcPts'), 'val')) / 100 + 'px'
         : child(ls, 'spcPct')
-          ? (1.16 * Number(attr(child(ls, 'spcPct'), 'val'))) / 100000
+          ? Number(attr(child(ls, 'spcPct'), 'val')) / 100000
           : undefined;
       return {
         runs,
@@ -356,11 +358,87 @@ function readShape(n, ctx, index, layer, master) {
     const firstPara = obj.paragraphs[0],
       s = firstPara?.runs[0] || firstPara?.base;
     if (s)
-      for (const k of ['font', 'size', 'color', 'bold', 'italic'])
+      for (const k of [
+        'font',
+        'size',
+        'color',
+        'bold',
+        'italic',
+        'letterSpacing',
+      ])
         obj[k] = s[k];
+    obj.lineHeight = firstPara?.lineHeight;
     obj.align = firstPara?.align || 'left';
   }
   return obj;
+}
+export function readSlidePage({
+  xml,
+  media,
+  doc,
+  pres,
+  page,
+  rel,
+  layoutPath,
+}) {
+  const layout = doc(layoutPath);
+  const masterPath =
+      layoutPath &&
+      relationships(xml, layoutPath).find((r) => r.type === 'slideMaster')
+        ?.target,
+    master = doc(masterPath);
+  const themePath =
+    masterPath &&
+    relationships(xml, masterPath).find((r) => r.type === 'theme')?.target;
+  const theme = themeFor(doc(themePath), master, layout, page);
+  const ctx = {
+    rels: rel,
+    theme,
+    master,
+    media,
+    defaults: desc(pres, 'defaultTextStyle'),
+  };
+  const lt = desc(layout, 'spTree'),
+    mt = desc(master, 'spTree');
+  const items = children(desc(page, 'spTree'))
+    .map((n, idx) => {
+      const ln = matchPlaceholder(n, lt);
+      return readShape(n, ctx, idx, ln, matchPlaceholder(ln || n, mt));
+    })
+    .filter(Boolean);
+  const bg = first(
+    ...[page, layout, master].map(
+      (d) =>
+        color(desc(desc(d, 'bgPr'), 'solidFill'), theme) ||
+        color(desc(d, 'bgRef'), theme)
+    ),
+    '#FFFFFF'
+  );
+  const name = attr(desc(page, 'cSld'), 'name');
+  const s = {
+    ...slide(name, bg, items),
+    layoutPath,
+  };
+  for (const [tree, path, show] of [
+    [
+      mt,
+      masterPath,
+      attr(layout?.documentElement, 'showMasterSp') !== '0' &&
+        attr(page.documentElement, 'showMasterSp') !== '0',
+    ],
+    [lt, layoutPath, attr(page.documentElement, 'showMasterSp') !== '0'],
+  ]) {
+    if (show && path)
+      s.back.push(
+        ...children(tree)
+          .filter((n) => !desc(n, 'ph'))
+          .map((n, i) =>
+            readShape(n, { ...ctx, rels: relationships(xml, path) }, i)
+          )
+          .filter(Boolean)
+      );
+  }
+  return s;
 }
 export function importDeck(parts) {
   const { xml, media } = parts;
@@ -384,68 +462,13 @@ export function importDeck(parts) {
       page = doc(source);
     if (!page) throw Error('Slide ' + (i + 1) + ' is missing.');
     const rel = relationships(xml, source),
-      layoutPath = rel.find((r) => r.type === 'slideLayout')?.target,
-      layout = doc(layoutPath);
-    const masterPath =
-        layoutPath &&
-        relationships(xml, layoutPath).find((r) => r.type === 'slideMaster')
-          ?.target,
-      master = doc(masterPath);
-    const themePath =
-      masterPath &&
-      relationships(xml, masterPath).find((r) => r.type === 'theme')?.target;
-    const theme = themeFor(doc(themePath), master, layout, page);
-    const ctx = {
-      rels: rel,
-      theme,
-      master,
-      media,
-      defaults: desc(pres, 'defaultTextStyle'),
-    };
-    const lt = desc(layout, 'spTree'),
-      mt = desc(master, 'spTree');
-    const items = children(desc(page, 'spTree'))
-      .map((n, idx) => {
-        const ln = matchPlaceholder(n, lt);
-        return readShape(n, ctx, idx, ln, matchPlaceholder(ln || n, mt));
-      })
-      .filter(Boolean);
-    const bg = first(
-      ...[page, layout, master].map(
-        (d) =>
-          color(desc(desc(d, 'bgPr'), 'solidFill'), theme) ||
-          color(desc(d, 'bgRef'), theme)
-      ),
-      '#FFFFFF'
-    );
-    const name = attr(desc(page, 'cSld'), 'name');
-    const s = {
-      ...slide(name, bg, items),
+      layoutPath = rel.find((r) => r.type === 'slideLayout')?.target;
+    return {
+      ...readSlidePage({ xml, media, doc, pres, page, rel, layoutPath }),
       source,
-      layoutPath,
       relId: rid(id),
       slideId: attr(id, 'id'),
     };
-    for (const [tree, path, show] of [
-      [
-        mt,
-        masterPath,
-        attr(layout?.documentElement, 'showMasterSp') !== '0' &&
-          attr(page.documentElement, 'showMasterSp') !== '0',
-      ],
-      [lt, layoutPath, attr(page.documentElement, 'showMasterSp') !== '0'],
-    ]) {
-      if (show && path)
-        s.back.push(
-          ...children(tree)
-            .filter((n) => !desc(n, 'ph'))
-            .map((n, i) =>
-              readShape(n, { ...ctx, rels: relationships(xml, path) }, i)
-            )
-            .filter(Boolean)
-        );
-    }
-    return s;
   });
   if (!slides.length)
     throw Error('This presentation contains no editable slides.');

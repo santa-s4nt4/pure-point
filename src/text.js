@@ -1,3 +1,10 @@
+// PowerPoint's single-spaced baseline distance is about 1.21 em. Store
+// percentages as native multiples and keep exact point leading as CSS pixels
+// in the slide's one-logical-pixel-per-point coordinate system.
+export const singleLine = 1.21;
+export const lineBox = (value) =>
+  typeof value === 'string' ? value : (value || 1) * singleLine;
+
 // Retain formatting and hyperlinks on the unchanged prefix and suffix of a paragraph.
 export function replaceRunText(runs, next) {
   const prior = runs.join('');
@@ -32,9 +39,23 @@ export function updateText(object, text) {
     object.paragraphs = text.split('\n').map((line, i) => {
       const p = original[i];
       if (!p || !p.runs.length || p.runs.some((r) => r.text.includes('\n'))) {
-        const { font, size, bold, italic, color, align } = object;
-        const base = { font, size, bold, italic, color };
-        return { base, align, runs: [{ ...base, text: line }] };
+        const style = p || original[i - 1] || original[0] || {};
+        const { font, size, bold, italic, color, letterSpacing } = object;
+        const base = style.base || {
+          font,
+          size,
+          bold,
+          italic,
+          color,
+          letterSpacing,
+        };
+        return {
+          align: object.align,
+          lineHeight: object.lineHeight,
+          ...style,
+          base,
+          runs: [{ ...base, text: line }],
+        };
       }
       const values = replaceRunText(
         p.runs.map((r) => r.text),

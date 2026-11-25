@@ -1,8 +1,10 @@
 fn main() {
     println!("cargo:rerun-if-changed=src/pdf.m");
     println!("cargo:rerun-if-changed=native/movie.m");
+    println!("cargo:rerun-if-changed=native/text-fonts.m");
     cc::Build::new()
         .file("src/pdf.m")
+        .file("native/text-fonts.m")
         .file("native/movie.m")
         .flag("-fobjc-arc")
         .flag("-Wno-deprecated-declarations")
@@ -12,6 +14,7 @@ fn main() {
         "WebKit",
         "CoreGraphics",
         "CoreMedia",
+        "CoreText",
         "AVFoundation",
     ] {
         println!("cargo:rustc-link-lib=framework={framework}");

@@ -62,13 +62,21 @@ fn read_document(state: &Documents, path: PathBuf) -> Result<Opened, String> {
     Ok(Opened { id, path, parts })
 }
 #[tauri::command]
-async fn open_template(app: AppHandle, state: State<'_, Documents>) -> Result<Opened, String> {
+async fn open_template(
+    app: AppHandle,
+    state: State<'_, Documents>,
+) -> Result<Option<Opened>, String> {
     let path = app
         .path()
         .home_dir()
         .map_err(|e| e.to_string())?
         .join("Library/CloudStorage/OneDrive-電通/zero/template.potx");
-    read_document(&state, path.clone()).map_err(|e| {
+    match std::fs::metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("Could not access {}: {e}", path.display())),
+        Ok(_) => {}
+    }
+    read_document(&state, path.clone()).map(Some).map_err(|e| {
         format!(
             "Could not open {}. Check that the template is available in OneDrive. {e}",
             path.display()
@@ -127,6 +135,12 @@ struct Typeface {
 }
 #[tauri::command]
 async fn system_fonts() -> Vec<Typeface> {
+    unsafe extern "C" {
+        fn pp_register_yu_gothic();
+    }
+    unsafe {
+        pp_register_yu_gothic();
+    }
     let mut result = Vec::new();
     if let Some(faces) = font_collection::create_for_all_families().get_descriptors() {
         for face in faces.iter() {

@@ -1,3 +1,10 @@
+import { layoutPatches, placeholderShape } from './slide-layouts.js';
+import {
+  geometryXML,
+  strokeXML,
+  connectorXML,
+  patchVector,
+} from './vector-xml.js';
 import { writeDocumentMetadata } from './document-metadata.js';
 import { syncLayerTree, groupXML } from './layer-xml.js';
 import { createPictureWriter, discardUnlinkedMedia } from './media-xml.js';
@@ -25,7 +32,7 @@ import {
   solid,
 } from './xml.js';
 import { relationships } from './import.js';
-import { replaceRunText } from './text.js';
+import { replaceRunText,updateText } from './text.js';
 import { template, slideType } from './template.js';
 
 const xfrm = (o) =>
@@ -34,39 +41,88 @@ const align = (s) =>
   ({ left: 'l', right: 'r', center: 'ctr', justify: 'just' })[s] || 'l';
 const typefaces = (o) =>
   ['latin', 'ea', 'cs']
-    .map((s) => `<a:${s} typeface="${esc(o.font)}"/>`)
-    .join('');
-function textBody(o) {
-  const [l, t, r, b] = o.inset.map(emu);
-  const runs = o.text
-    .split('\n')
     .map(
-      (line) =>
-        `<a:p><a:pPr algn="${align(o.align)}"><a:lnSpc><a:spcPct val="100000"/></a:lnSpc><a:spcBef><a:spcPts val="0"/></a:spcBef><a:spcAft><a:spcPts val="0"/></a:spcAft><a:buNone/></a:pPr><a:r><a:rPr lang="ja-JP" sz="${Math.round(o.size * 100)}" b="${+o.bold}" i="${+o.italic}">${solid(o.color)}${typefaces(o)}</a:rPr><a:t>${esc(line)}</a:t></a:r><a:endParaRPr lang="ja-JP" sz="${Math.round(o.size * 100)}"/></a:p>`
+      (s) =>
+        `<a:${s} typeface="${esc(s === 'ea' ? o.eastAsianFont || o.font : o.font)}"/>`
     )
     .join('');
-  return `<p:txBody><a:bodyPr wrap="square" lIns="${l}" tIns="${t}" rIns="${r}" bIns="${b}" anchor="${{ middle: 'ctr', bottom: 'b' }[o.valign] || 't'}"><a:noAutofit/></a:bodyPr><a:lstStyle/>${runs}</p:txBody>`;
+function lineSpacingXml(value) {
+  return typeof value === 'string'
+    ? '<a:spcPts val="' + Math.round(parseFloat(value) * 100) + '"/>'
+    : '<a:spcPct val="' + Math.round((value || 1) * 100000) + '"/>';
 }
-function geometry(o) {
-  if (o.kind === 'path') {
-    const paths = o.paths
-      .map(
-        (points) =>
-          `<a:path w="1000" h="1000" fill="${o.fill ? 'norm' : 'none'}">${points
-            .map(([x, y], i) => {
-              const tag = i ? 'lnTo' : 'moveTo';
-              return `<a:${tag}><a:pt x="${Math.round(x)}" y="${Math.round(y)}"/></a:${tag}>`;
-            })
-            .join('')}</a:path>`
-      )
-      .join('');
-    return `<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="l" t="t" r="r" b="b"/><a:pathLst>${paths}</a:pathLst></a:custGeom>`;
-  }
-  return `<a:prstGeom prst="${o.kind === 'text' ? 'rect' : o.kind}"><a:avLst/></a:prstGeom>`;
+function textBody(o) {
+  const [l, t, r, b] = o.inset.map(emu);
+  const paragraphs =
+    o.paragraphs ||
+    o.text.split('\n').map((text) => ({ runs: [{ ...o, text }] }));
+  const runProps = (style) =>
+    'lang="ja-JP" spc="' +
+    Math.round((style.letterSpacing || 0) * 100) +
+    '" sz="' +
+    Math.round(style.size * 100) +
+    '" b="' +
+    Number(Boolean(style.bold)) +
+    '" i="' +
+    Number(Boolean(style.italic)) +
+    '"';
+  const runs = paragraphs
+    .map((p) => {
+      const style = p.base || o;
+      const props =
+        '<a:pPr algn="' +
+        align(p.align || o.align) +
+        '" marL="' +
+        emu(p.margin || 0) +
+        '" indent="' +
+        emu(p.indent || 0) +
+        '"><a:lnSpc>' +
+        lineSpacingXml(p.lineHeight ?? o.lineHeight) +
+        '</a:lnSpc><a:spcBef><a:spcPts val="' +
+        Math.round((p.before || 0) * 100) +
+        '"/></a:spcBef><a:spcAft><a:spcPts val="' +
+        Math.round((p.after || 0) * 100) +
+        '"/></a:spcAft>' +
+        (p.bullet
+          ? '<a:buChar char="' + esc(p.bullet) + '"/>'
+          : '<a:buNone/>') +
+        '</a:pPr>';
+      const text = p.runs
+        .map((run) => {
+          const attrs =
+            '<a:rPr ' +
+            runProps(run) +
+            '>' +
+            solid(run.color) +
+            typefaces(run) +
+            '</a:rPr>';
+          return run.text
+            .split('\n')
+            .map(
+              (line) => '<a:r>' + attrs + '<a:t>' + esc(line) + '</a:t></a:r>'
+            )
+            .join('<a:br>' + attrs + '</a:br>');
+        })
+        .join('');
+      return (
+        '<a:p>' +
+        props +
+        text +
+        '<a:endParaRPr ' +
+        runProps(style) +
+        '>' +
+        solid(style.color) +
+        typefaces(style) +
+        '</a:endParaRPr></a:p>'
+      );
+    })
+    .join('');
+  return `<p:txBody><a:bodyPr wrap="${o.autoWidth ? 'none' : 'square'}" lIns="${l}" tIns="${t}" rIns="${r}" bIns="${b}" anchor="${{ middle: 'ctr', bottom: 'b' }[o.valign] || 't'}">${o.autoWidth ? '<a:spAutoFit/>' : '<a:noAutofit/>'}</a:bodyPr><a:lstStyle/>${runs}</p:txBody>`;
 }
 function shapeXML(o, id) {
+  if (o.kind === 'line') return connectorXML(o, id, xfrm(o));
   const name = `<p:cNvPr id="${id}" name="${esc(o.name)}"/>`;
-  return `<p:sp><p:nvSpPr>${name}<p:cNvSpPr${o.kind === 'text' ? ' txBox="1"' : ''}/><p:nvPr/></p:nvSpPr><p:spPr>${xfrm(o)}${geometry(o)}${solid(o.fill)}<a:ln w="${emu(o.strokeWidth)}">${solid(o.stroke)}</a:ln></p:spPr>${o.kind === 'text' || o.text ? textBody(o) : ''}</p:sp>`;
+  return `<p:sp><p:nvSpPr>${name}<p:cNvSpPr${o.kind === 'text' ? ' txBox="1"' : ''}/><p:nvPr/></p:nvSpPr><p:spPr>${xfrm(o)}${geometryXML(o)}${solid(o.fill)}${strokeXML(o)}</p:spPr>${o.kind === 'text' || o.text ? textBody(o) : ''}</p:sp>`;
 }
 const fragment = (doc, xml) =>
   doc.importNode(
@@ -147,9 +203,7 @@ function patchOriginal(n, o, old, reparented = false) {
       )
     );
   }
-  const line = child(child(n, 'spPr'), 'ln');
-  if (line && changed('strokeWidth'))
-    line.setAttribute('w', emu(o.strokeWidth));
+  patchVector(n, o, old, fragment);
   const body = child(n, 'txBody');
   if (changed('text')) {
     const next = fragment(doc, textBody(o));
@@ -157,11 +211,18 @@ function patchOriginal(n, o, old, reparented = false) {
       // Reuse run and paragraph markup for edits within existing paragraphs.
       // A run keeps its formatting and hyperlink when its characters survive.
       const paragraphs = children(body, 'p'),
-        lines = o.text.split('\n');
+        lines = children(next,'p').map(p=>children(p).filter(r=>['r','fld','br'].includes(r.localName)).map(r=>r.localName==='br'?'\n':child(r,'t')?.textContent || '').join(''));
       lines.forEach((line, i) => {
         const p = paragraphs[i];
         if (!p) {
-          body.appendChild(children(next, 'p')[i].cloneNode(true));
+          body.appendChild(
+            o.placeholder
+              ? fragment(
+                  doc,
+                  '<a:p><a:r><a:t>' + esc(line) + '</a:t></a:r></a:p>'
+                )
+              : children(next, 'p')[i].cloneNode(true)
+          );
           return;
         }
         const runs = children(p).filter((r) =>
@@ -170,6 +231,14 @@ function patchOriginal(n, o, old, reparented = false) {
         const prior =
           old.paragraphs?.[i]?.runs.map((r) => r.text).join('') ?? '';
         if (line === prior) return;
+        if (!runs.length && o.placeholder) {
+          // Inherit placeholder layout and list style, including themed fonts.
+          p.insertBefore(
+            fragment(doc, '<a:r><a:t>' + esc(line) + '</a:t></a:r>'),
+            child(p, 'endParaRPr') || null
+          );
+          return;
+        }
         if (!runs.length || runs.some((r) => r.localName === 'br')) {
           p.replaceWith(children(next, 'p')[i].cloneNode(true));
           return;
@@ -194,9 +263,29 @@ function patchOriginal(n, o, old, reparented = false) {
       props.setAttribute(k, emu(o.inset[i]))
     );
   }
+  if (Boolean(o.autoWidth) !== Boolean(old.autoWidth)) {
+    const props = ensure(tb, A, 'a:bodyPr', tb.firstElementChild);
+    props.setAttribute('wrap', o.autoWidth ? 'none' : 'square');
+    const target = fragment(
+      doc,
+      o.autoWidth ? '<a:spAutoFit/>' : '<a:noAutofit/>'
+    );
+    const existing = children(props).find((el) =>
+      ['spAutoFit', 'noAutofit', 'normAutofit'].includes(el.localName)
+    );
+    if (existing) existing.replaceWith(target);
+    else
+      props.insertBefore(
+        target,
+        child(props, 'scene3d') ||
+          child(props, 'sp3d') ||
+          child(props, 'extLst') ||
+          null
+      );
+  }
   for (const [paragraphIndex, p] of children(tb, 'p').entries()) {
-    const current = o.paragraphs?.[paragraphIndex],
-      prior = old.paragraphs?.[paragraphIndex];
+    const current = o.paragraphs?.[paragraphIndex] || o,
+      prior = old.paragraphs?.[paragraphIndex] || old;
     if (current && prior) {
       const ppr = () => ensure(p, A, 'a:pPr', p.firstElementChild);
       if (current.margin !== prior.margin)
@@ -218,7 +307,7 @@ function patchOriginal(n, o, old, reparented = false) {
           oldSpacing = child(parent, element),
           spacing = fragment(
             doc,
-            `<a:${element}><a:spcPts val="${Math.round(val * 100)}"/></a:${element}>`
+            `<a:${element}>${element === 'lnSpc' ? lineSpacingXml(current.lineHeight) : '<a:spcPts val="' + Math.round(val * 100) + '"/>'}</a:${element}>`
           );
         if (oldSpacing) oldSpacing.replaceWith(spacing);
         else {
@@ -237,7 +326,22 @@ function patchOriginal(n, o, old, reparented = false) {
         'algn',
         align(o.align)
       );
-    if (!['size', 'font', 'bold', 'italic', 'color'].some(changed)) continue;
+    const styleChanged = (key) =>
+      changed(key) ||
+      Boolean(
+        current.base &&
+        prior.base &&
+        (current.base[key] !== prior.base[key] ||
+          current.runs.some(
+            (r, i) => prior.runs[i] && r[key] !== prior.runs[i][key]
+          ))
+      );
+    if (
+      !['size', 'font', 'bold', 'italic', 'color', 'letterSpacing'].some(
+        styleChanged
+      )
+    )
+      continue;
     const ppr = ensure(p, A, 'a:pPr', p.firstElementChild);
     const props = [
       ensure(ppr, A, 'a:defRPr', child(ppr, 'extLst')),
@@ -247,19 +351,19 @@ function patchOriginal(n, o, old, reparented = false) {
       ensure(p, A, 'a:endParaRPr'),
     ];
     for (const [i, rp] of props.entries()) {
-      const size = current
-        ? (current.runs[i - 1]?.size ?? current.base.size)
-        : o.size;
+      const style = current.runs?.[i - 1] || current.base || o;
+      const size = style.size;
       for (const [k, xmlKey, v] of [
         ['size', 'sz', Math.round(size * 100)],
-        ['bold', 'b', +o.bold],
-        ['italic', 'i', +o.italic],
+        ['letterSpacing', 'spc', Math.round((style.letterSpacing || 0) * 100)],
+        ['bold', 'b', +style.bold],
+        ['italic', 'i', +style.italic],
       ])
-        if (changed(k)) rp.setAttribute(xmlKey, v);
-      if (changed('color'))
+        if (styleChanged(k)) rp.setAttribute(xmlKey, v);
+      if (styleChanged('color'))
         replacePaint(
           rp,
-          o.color,
+          style.color,
           children(rp).find(
             (el) =>
               ![
@@ -273,7 +377,7 @@ function patchOriginal(n, o, old, reparented = false) {
               ].includes(el.localName)
           )
         );
-      if (changed('font')) {
+      if (styleChanged('font')) {
         const order = [
           'latin',
           'ea',
@@ -292,16 +396,21 @@ function patchOriginal(n, o, old, reparented = false) {
             children(rp).find(
               (el) => order.indexOf(el.localName) > order.indexOf(f)
             )
-          ).setAttribute('typeface', o.font);
+          ).setAttribute(
+            'typeface',
+            f === 'ea' ? style.eastAsianFont || style.font : style.font
+          );
       }
     }
   }
 }
 export function exportDeck(deck, base, assets = {}) {
-  const source = base?.parts || template(),
+  const original = base?.parts || template();
+  const addedLayouts = layoutPatches(deck, original.xml);
+  const source = { ...original, xml: { ...original.xml, ...addedLayouts } },
     xml = source.xml;
   const commentNodes = new Map();
-  const changes = { xml: base ? {} : { ...xml }, media: {} };
+  const changes = { xml: base ? { ...addedLayouts } : { ...xml }, media: {} };
   const presPath = base?.presPath || 'ppt/presentation.xml',
     dir = presPath.slice(0, presPath.lastIndexOf('/') + 1);
   const pres = parse(xml[presPath]),
@@ -360,6 +469,7 @@ export function exportDeck(deck, base, assets = {}) {
       if (!layoutPath) throw Error('The slide layout is missing.');
       sr = parse(rels([['rId1', 'slideLayout', relative(path, layoutPath)]]));
       doc = parse(rawSlide(s.name, s.bg));
+      if (s.inheritBackground === s.bg) desc(doc, 'bg')?.remove();
       structure = true;
       typesChanged = true;
     } else {
@@ -405,6 +515,11 @@ export function exportDeck(deck, base, assets = {}) {
       s.items,
       (o) => {
         id++;
+        if (o.placeholder && o.layoutOriginal) {
+          const node = fragment(doc, placeholderShape(o, id));
+          patchOriginal(node, o, o.layoutOriginal);
+          return node;
+        }
         if (o.kind === 'group') return fragment(doc, groupXML(o, id));
         if (o.kind === 'image' || o.kind === 'video')
           return fragment(doc, pictures.create(o, id, xfrm(o)));

@@ -1,6 +1,15 @@
+import { lineBox } from './text.js';
+import { vectorDrawing } from './vector-view.js';
 import {
   createElement,
   MousePointer2,
+  Slash,
+  AlignStartVertical,
+  AlignCenterVertical,
+  AlignEndVertical,
+  AlignStartHorizontal,
+  AlignCenterHorizontal,
+  AlignEndHorizontal,
   Video,
   Link,
   PanelRight,
@@ -61,6 +70,13 @@ import { tableNode } from './table.js';
 import { gridLines } from './grid.js';
 const icons = {
   pointer: MousePointer2,
+  line: Slash,
+  objectleft: AlignStartVertical,
+  objecthcenter: AlignCenterVertical,
+  objectright: AlignEndVertical,
+  objecttop: AlignStartHorizontal,
+  objectvcenter: AlignCenterHorizontal,
+  objectbottom: AlignEndHorizontal,
   video: Video,
   embed: Link,
   panel: PanelRight,
@@ -145,66 +161,21 @@ function typeStyle(n, o) {
     color: o.color,
     fontWeight: o.bold ? '700' : '400',
     fontStyle: o.italic ? 'italic' : 'normal',
+    letterSpacing: (o.letterSpacing || 0) + 'px',
   });
-}
-const svgNS = 'http://www.w3.org/2000/svg';
-function drawing(o) {
-  const svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${o.w || 1} ${o.h || 1}`);
-  svg.setAttribute('preserveAspectRatio', 'none');
-  let name = 'rect',
-    attrs = {};
-  if (o.kind === 'ellipse') {
-    name = 'ellipse';
-    attrs = { cx: o.w / 2, cy: o.h / 2, rx: o.w / 2, ry: o.h / 2 };
-  } else if (o.kind === 'path' || o.kind === 'triangle' || o.kind === 'line') {
-    name = 'path';
-    attrs.d =
-      o.kind === 'triangle'
-        ? `M${o.w / 2} 0 L${o.w} ${o.h} L0 ${o.h}Z`
-        : o.kind === 'line'
-          ? `M0 0 L${o.w} ${o.h}`
-          : o.paths
-              .map((pts) =>
-                pts
-                  .map(
-                    ([x, y], i) =>
-                      (i ? 'L' : 'M') +
-                      ((x * o.w) / 1000).toFixed(2) +
-                      ' ' +
-                      ((y * o.h) / 1000).toFixed(2)
-                  )
-                  .join('')
-              )
-              .join('');
-  } else
-    attrs = {
-      width: o.w,
-      height: o.h,
-      rx: o.kind === 'roundRect' ? Math.min(o.w, o.h) * 0.13 : 0,
-    };
-  const s = document.createElementNS(svgNS, name);
-  for (const [k, v] of Object.entries({
-    ...attrs,
-    fill: o.fill || 'none',
-    stroke: o.stroke || 'none',
-    'stroke-width': o.strokeWidth,
-  }))
-    s.setAttribute(k, v);
-  svg.append(s);
-  svg.classList.add('geometry');
-  return svg;
 }
 export function itemNode(o, assets, interactive = false) {
   const n = el('div', 'item');
   if (interactive) n.dataset.id = o.id;
+  if (o.kind === 'line') n.classList.add('is-line');
+  const pathShape = o.kind === 'line' || o.kind === 'path';
   if (o.hidden) n.hidden = true;
   if (o.locked) n.classList.add('locked-layer');
   Object.assign(n.style, {
     left: o.x + 'px',
     top: o.y + 'px',
-    width: o.w + 'px',
-    height: o.h + 'px',
+    width: (pathShape ? o.w || 1 : o.w) + 'px',
+    height: (pathShape ? o.h || 1 : o.h) + 'px',
     transform: `rotate(${o.rotation}deg) scale(${o.flipH ? -1 : 1},${o.flipV ? -1 : 1})`,
   });
   if (o.kind === 'video') {
@@ -237,7 +208,8 @@ export function itemNode(o, assets, interactive = false) {
     const ph = el('div', 'unsupported');
     ph.textContent = o.name;
     n.append(ph);
-  } else if (o.kind !== 'text' || o.fill || o.stroke) n.append(drawing(o));
+  } else if (o.kind !== 'text' || o.fill || o.stroke)
+    n.append(vectorDrawing(o, interactive === true));
   if (o.text || o.kind === 'text') {
     const text = el('div', 'item-text');
     typeStyle(text, o);
@@ -247,7 +219,15 @@ export function itemNode(o, assets, interactive = false) {
       justifyContent:
         { middle: 'center', bottom: 'flex-end' }[o.valign] || 'flex-start',
       textAlign: o.align,
+      lineHeight: lineBox(o.lineHeight),
     });
+    if (interactive === true && o.placeholder && !o.text) {
+      n.classList.add('empty-placeholder');
+      text.dataset.prompt = ['title', 'ctrTitle'].includes(o.placeholder.type)
+        ? 'Title'
+        : 'Content';
+    }
+    if (o.autoWidth) text.classList.add('point-text');
     if (o.paragraphs) {
       for (const p of o.paragraphs) {
         const line = el('div');
@@ -258,9 +238,9 @@ export function itemNode(o, assets, interactive = false) {
           marginBottom: (p.after || 0) + 'px',
           paddingLeft: (p.margin || 0) + 'px',
           textIndent: (p.indent || 0) + 'px',
-          lineHeight: p.lineHeight || '1.16',
+          lineHeight: lineBox(p.lineHeight),
         });
-        if (p.bullet) line.append(document.createTextNode(p.bullet + ' '));
+        if (p.bullet) line.dataset.bullet = p.bullet;
         for (const run of p.runs) {
           const chunks =
             run.eastAsianFont && run.eastAsianFont !== run.font
