@@ -83,9 +83,11 @@ export function createPictureWriter({
     if (!asset) throw Error('The media asset is missing.');
     const data = assets[asset] || source.media[asset];
     if (!data) throw Error('Unable to find media: ' + asset);
-    if (!source.media[asset])
-      changes.media[asset] = data.slice(data.indexOf(',') + 1);
-    const mime = data.slice(5, data.indexOf(';')),
+    if (!source.media[asset]) {
+      if (data.token) (changes.videoFiles ??= {})[asset] = data.token;
+      else changes.media[asset] = data.slice(data.indexOf(',') + 1);
+    }
+    const mime = data.mime || data.slice(5, data.indexOf(';')),
       ext = asset.split('.').pop(),
       root = types.documentElement;
     const existing = children(root, 'Default').find(

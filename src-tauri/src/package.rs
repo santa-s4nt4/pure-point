@@ -10,15 +10,23 @@ use tempfile::NamedTempFile;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 #[derive(Serialize)]
+#[serde(untagged)]
+pub enum Media {
+    Inline(String),
+    Movie(crate::movies::MovieAsset),
+}
+#[derive(Serialize)]
 pub struct Preview {
     pub xml: BTreeMap<String, String>,
-    pub media: BTreeMap<String, String>,
+    pub media: BTreeMap<String, Media>,
 }
 
 #[derive(Deserialize, Default)]
 pub struct Changes {
     #[serde(default)]
     pub removed: std::collections::HashSet<String>,
+    #[serde(default, rename = "videoFiles")]
+    pub video_files: BTreeMap<String, String>,
     pub xml: BTreeMap<String, String>,
     pub media: BTreeMap<String, String>,
 }
@@ -30,6 +38,25 @@ pub fn preview(bytes: &[u8]) -> Result<Preview, String> {
         xml: BTreeMap::new(),
         media: BTreeMap::new(),
     };
+    if let Err(error) = read_preview(&mut archive, &mut result) {
+        let tokens = result
+            .media
+            .values()
+            .filter_map(|m| match m {
+                Media::Movie(v) => Some(v.token.clone()),
+                _ => None,
+            })
+            .collect();
+        crate::movies::release_movies(tokens);
+        return Err(error);
+    }
+    Ok(result)
+}
+
+fn read_preview(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    result: &mut Preview,
+) -> Result<(), String> {
     let mut remaining = 512 * 1024 * 1024u64;
     for i in 0..archive.len() {
         let mut part = archive.by_index(i).map_err(|e| e.to_string())?;
@@ -53,6 +80,15 @@ pub fn preview(bytes: &[u8]) -> Result<Preview, String> {
             _ => "",
         };
         if !xml && mime.is_empty() {
+            continue;
+        }
+        if mime.starts_with("video/") {
+            let size = part.size();
+            remaining = remaining
+                .checked_sub(size)
+                .ok_or("The extracted presentation exceeds 512 MB.")?;
+            let asset = crate::movies::extract(&mut part, &ext, mime, size)?;
+            result.media.insert(name, Media::Movie(asset));
             continue;
         }
         let mut data = Vec::new();
@@ -87,11 +123,11 @@ pub fn preview(bytes: &[u8]) -> Result<Preview, String> {
         } else {
             result.media.insert(
                 name,
-                format!("data:{mime};base64,{}", STANDARD.encode(data)),
+                Media::Inline(format!("data:{mime};base64,{}", STANDARD.encode(data))),
             );
         }
     }
-    Ok(result)
+    Ok(())
 }
 
 pub fn save(path: &Path, original: Option<&[u8]>, changes: Changes) -> Result<(), String> {
@@ -99,8 +135,10 @@ pub fn save(path: &Path, original: Option<&[u8]>, changes: Changes) -> Result<()
         .parent()
         .ok_or("Choose a destination to save the presentation.")?;
     let mut temp = NamedTempFile::new_in(folder).map_err(|e| e.to_string())?;
-    let unchanged =
-        changes.xml.is_empty() && changes.media.is_empty() && changes.removed.is_empty();
+    let unchanged = changes.video_files.is_empty()
+        && changes.xml.is_empty()
+        && changes.media.is_empty()
+        && changes.removed.is_empty();
     if let Some(bytes) = original.filter(|_| unchanged) {
         temp.write_all(bytes).map_err(|e| e.to_string())?;
     } else {
@@ -112,6 +150,7 @@ pub fn save(path: &Path, original: Option<&[u8]>, changes: Changes) -> Result<()
                 if !changes.removed.contains(part.name())
                     && !changes.xml.contains_key(part.name())
                     && !changes.media.contains_key(part.name())
+                    && !changes.video_files.contains_key(part.name())
                 {
                     output.raw_copy_file(part).map_err(|e| e.to_string())?;
                 }
@@ -133,6 +172,16 @@ pub fn save(path: &Path, original: Option<&[u8]>, changes: Changes) -> Result<()
                 .start_file(name, options)
                 .map_err(|e| e.to_string())?;
             output.write_all(&bytes).map_err(|e| e.to_string())?;
+        }
+        for (name, token) in changes.video_files {
+            let mut file = crate::movies::open_file(&token)?;
+            output
+                .start_file(
+                    name,
+                    SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
+                )
+                .map_err(|e| e.to_string())?;
+            io::copy(&mut file, &mut output).map_err(|e| e.to_string())?;
         }
         output.finish().map_err(|e| e.to_string())?;
     }

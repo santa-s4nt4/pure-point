@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod fonts;
 mod gestures;
+mod movies;
 mod package;
 mod pdf;
 mod player;
@@ -217,12 +218,19 @@ fn main() {
             system_fonts,
             fonts::font_data,
             player::youtube_player_url,
+            movies::pick_movie,
+            movies::start_movie_upload,
+            movies::append_movie_chunk,
+            movies::finish_movie_upload,
+            movies::cancel_movie_upload,
+            movies::release_movies,
             set_dirty,
             finish_quit
         ])
         .build(tauri::generate_context!())
         .expect("pure-point could not start")
         .run(|app, event| match event {
+            tauri::RunEvent::Exit => movies::clear(),
             tauri::RunEvent::Opened { urls } => {
                 if let Some(path) = urls.iter().filter_map(|u| u.to_file_path().ok()).find(|p| {
                     p.extension()

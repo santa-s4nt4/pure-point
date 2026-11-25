@@ -69,10 +69,22 @@ export async function savePackage(base, path, name, changes) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   return a.download;
 }
-export const release = (base) =>
-  native && base?.id != null
-    ? invoke('release_document', { id: base.id })
+export function releaseMovies(values) {
+  const tokens = [
+    ...new Set(values.map((value) => value?.token).filter(Boolean)),
+  ];
+  return native && tokens.length
+    ? invoke('release_movies', { tokens })
     : Promise.resolve();
+}
+export async function release(
+  base,
+  values = Object.values(base?.parts.media ?? {})
+) {
+  await releaseMovies(values);
+  if (native && base?.id != null)
+    await invoke('release_document', { id: base.id });
+}
 export const dirtyFlag = (dirty) =>
   native ? invoke('set_dirty', { dirty }) : Promise.resolve();
 export const quit = () => native && invoke('finish_quit');

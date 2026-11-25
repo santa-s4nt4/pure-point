@@ -135,7 +135,7 @@ export function videoNode(o, assets, live = false) {
   let ready = false;
   function load() {
     if (!ready) {
-      video.src = assets[o.asset];
+      video.src = assets[o.asset]?.url || assets[o.asset];
       ready = true;
     }
   }

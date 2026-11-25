@@ -1010,6 +1010,7 @@ async function allowReplace() {
 }
 function reset(next, nextBase, nextTitle, nextPath) {
   const previous = base;
+  const previousAssets = Object.values(assets);
   base = nextBase;
   overview = false;
   commentDrafts.clear();
@@ -1032,7 +1033,7 @@ function reset(next, nextBase, nextTitle, nextPath) {
   zoom = 'fit';
   tab = 'design';
   render();
-  platform.release(previous);
+  platform.release(previous, previousAssets);
 }
 async function newDocument() {
   const file = await openTemplate();

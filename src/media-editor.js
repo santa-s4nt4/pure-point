@@ -1,4 +1,5 @@
-import { pickFile, toData } from './platform.js';
+import { invoke } from '@tauri-apps/api/core';
+import { native, pickFile, toData, releaseMovies } from './platform.js';
 import { shape, uid } from './model.js';
 import { onlineVideo, videoTypes } from './media-format.js';
 
@@ -87,10 +88,74 @@ async function imageFile(file) {
     props: { asset: data.path, crop: [0, 0, 0, 0] },
   };
 }
+function videoResult(name, asset, { w, h, poster }) {
+  const cover = stored('image/png', 'png', poster);
+  return {
+    name,
+    w,
+    h,
+    kind: 'video',
+    files: [asset, cover],
+    props: {
+      asset: asset.path,
+      poster: cover.path,
+      embed: null,
+      crop: [0, 0, 0, 0],
+    },
+  };
+}
+async function preparedVideo(info) {
+  const { name, asset } = info;
+  const ext =
+    asset.mime === 'video/mp4' ? 'mp4' : fileFormat({ name }, videoTypes).ext;
+  const movie = {
+    path: 'ppt/media/pure-point-' + uid() + '.' + ext,
+    value: asset,
+  };
+  try {
+    const metadata = info.poster ? info : await previewVideo(asset.url, true);
+    return videoResult(name, movie, metadata);
+  } catch (error) {
+    await releaseMovies([asset]);
+    throw error;
+  }
+}
+async function droppedMovie(file) {
+  const id = await invoke('start_movie_upload', {
+    name: file.name,
+    size: file.size,
+  });
+  try {
+    const chunk = 1024 * 1024;
+    for (let offset = 0; offset < file.size; offset += chunk) {
+      const bytes = await file.slice(offset, offset + chunk).arrayBuffer();
+      await invoke('append_movie_chunk', bytes, {
+        headers: { 'x-movie-id': id, 'x-movie-offset': String(offset) },
+      });
+    }
+    return preparedVideo(await invoke('finish_movie_upload', { id }));
+  } finally {
+    await invoke('cancel_movie_upload', { id });
+  }
+}
 async function videoFile(file) {
+  if (native) return droppedMovie(file);
   const { mime, ext } = fileFormat(file, videoTypes);
-  const url = URL.createObjectURL(file),
-    video = document.createElement('video');
+  const url = URL.createObjectURL(file);
+  try {
+    const metadata = await previewVideo(url);
+    return videoResult(
+      file.name,
+      stored(mime, ext, await toData(file)),
+      metadata
+    );
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+async function previewVideo(url, crossOrigin = false) {
+  const video = document.createElement('video');
+  if (crossOrigin) video.crossOrigin = 'anonymous';
   video.muted = true;
   video.playsInline = true;
   video.preload = 'auto';
@@ -110,25 +175,14 @@ async function videoFile(file) {
     canvas.width = Math.max(1, Math.round(video.videoWidth * ratio));
     canvas.height = Math.max(1, Math.round(video.videoHeight * ratio));
     canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-    const cover = stored('image/png', 'png', canvas.toDataURL()),
-      asset = stored(mime, ext, await toData(file));
     return {
-      kind: 'video',
-      name: file.name,
       w: video.videoWidth,
       h: video.videoHeight,
-      files: [asset, cover],
-      props: {
-        asset: asset.path,
-        poster: cover.path,
-        embed: null,
-        crop: [0, 0, 0, 0],
-      },
+      poster: canvas.toDataURL(),
     };
   } finally {
     video.removeAttribute('src');
     video.load();
-    URL.revokeObjectURL(url);
   }
 }
 function embedVideo(raw) {
@@ -200,7 +254,10 @@ export function createMediaEditor({
   const stillActive = (deck, slide) =>
     deck === getDeck() && slide === getSlide();
   function insert(result, deck, slide, point) {
-    if (!stillActive(deck, slide)) return;
+    if (!stillActive(deck, slide)) {
+      releaseMovies(result.files.map((f) => f.value));
+      return;
+    }
     put(result.files, getAssets());
     const ratio = Math.min(
       (deck.w * 0.55) / result.w,
@@ -217,23 +274,34 @@ export function createMediaEditor({
       : (deck.h - h) / 2;
     addObject(shape(result.kind, result.name, x, y, w, h, result.props));
   }
-  async function pick(kind) {
-    const deck = getDeck(),
-      slide = getSlide();
+  async function chooseMedia(kind) {
     if (kind === 'embed') {
       const url = await askVideo();
-      if (url) insert(embedVideo(url), deck, slide);
-      return;
+      return url ? embedVideo(url) : null;
+    }
+    if (kind === 'video' && native) {
+      const movie = await invoke('pick_movie');
+      return movie ? preparedVideo(movie) : null;
     }
     const file = await pickFile(
       kind === 'image' ? '.png,.jpg,.jpeg,.gif,.webp' : videoAccept
     );
-    if (!file) return;
-    insert(
-      await (kind === 'image' ? imageFile(file) : videoFile(file)),
-      deck,
-      slide
-    );
+    if (!file) return null;
+    return kind === 'image' ? imageFile(file) : videoFile(file);
+  }
+  async function pick(kind) {
+    const deck = getDeck(),
+      slide = getSlide();
+    const result = await chooseMedia(kind);
+    if (result) insert(result, deck, slide);
+  }
+  async function replaceMedia(target) {
+    const deck = getDeck(),
+      slide = getSlide();
+    if (isBusy() || !target || editableMedia(slide.items, target.id) !== target)
+      return;
+    const result = await chooseMedia(target.kind);
+    if (result) replace(target, result, deck, slide);
   }
   const sourceAt = (node) => {
     const id = node.closest('[data-id]')?.dataset.id;
@@ -243,8 +311,10 @@ export function createMediaEditor({
     if (
       !stillActive(deck, slide) ||
       editableMedia(slide.items, target.id) !== target
-    )
+    ) {
+      releaseMovies(result.files.map((f) => f.value));
       return;
+    }
     put(result.files, getAssets());
     change(() => {
       Object.assign(target, result.props, { name: result.name });
@@ -259,11 +329,8 @@ export function createMediaEditor({
         if (target?.kind !== 'image') return;
         e.preventDefault();
         e.stopImmediatePropagation();
-        const deck = getDeck(),
-          slide = getSlide();
         try {
-          const file = await pickFile('.png,.jpg,.jpeg,.gif,.webp');
-          if (file) replace(target, await imageFile(file), deck, slide);
+          await replaceMedia(target);
         } catch (err) {
           fail(err);
         }
@@ -330,6 +397,7 @@ export function createMediaEditor({
     });
   }
   return {
+    replaceMedia,
     insertImage: () => pick('image'),
     insertVideo: () => pick('video'),
     insertEmbed: () => pick('embed'),
