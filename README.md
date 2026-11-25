@@ -60,6 +60,8 @@ For a synced file in a recognized Dentsu business account, **Copy link** request
 
 The Mac app can open presentations larger than 512 MB. It keeps a private working copy on disk and reads embedded images and video as needed. Saving streams the original package parts into the new PPTX. The 512 MiB memory guard applies to uncompressed XML only.
 
+The editor reads Latin and East Asian typefaces independently, including localized font names and fonts supplied by PowerPoint on this Mac. For missing glyphs, it uses the Japanese run's character set to choose an Office substitute when applicable, then falls back to the slide theme. Text edits preserve the original PowerPoint font names and formatting of surrounding runs.
+
 Text, shapes, groups, review comments, sections, and hidden-slide state are stored in the PowerPoint package. Editing an imported deck preserves its original parts wherever possible. The editor approximates some imported features, including charts, SmartArt, effects, and animations. PDF uses the editor’s visible slide content. Video appears as a still. For matching typography on another computer, install the same fonts there. Video playback depends on the system decoder or the video provider.
 
 ## Development
@@ -82,7 +84,7 @@ The UI tests use the installed Google Chrome. The browser development surface st
 
 ## macOS releases
 
-Pushing a version tag such as `v0.3.3` runs the editor and Rust tests, builds an Apple Silicon and Intel universal app, and publishes `pure-point-macOS.zip` to GitHub Releases. If GitHub reports it could not allocate the Apple Silicon build runner, the release is retried once. The workflow can also be run manually from Actions to download a build artifact. Release bundles use an ad-hoc signature.
+Pushing a version tag such as `v0.3.4` runs the editor and Rust tests, builds an Apple Silicon and Intel universal app, and publishes `pure-point-macOS.zip` to GitHub Releases. If GitHub reports it could not allocate the Apple Silicon build runner, the release is retried once. The workflow can also be run manually from Actions to download a build artifact. Release bundles use an ad-hoc signature.
 
 If GitHub interrupts publication, the publisher retries and reuses any uploaded ZIP with the same SHA-256. To recover a previous tag build while its artifact is still available, open **Actions → macOS release → Run workflow**, select `main`, and enter the original run ID in `recover_run_id`. The workflow verifies the build and tag, then publishes the original ZIP.
 
