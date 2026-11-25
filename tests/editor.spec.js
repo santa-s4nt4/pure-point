@@ -60,7 +60,7 @@ test('編集、グリッドへの吸着、PPTXへの保存と再読み込み', a
   await expect(text).toBeVisible();
   await text.press('Escape');
   await page.locator('.rail [data-action="addSlide"]').click();
-  await page.getByRole('button', { name: 'タイトルのみ', exact: true }).click();
+  await page.getByRole('button', { name: 'header title', exact: true }).click();
   await expect(page.locator('.select-slide')).toHaveCount(2);
   await menuAction(page, 'undo');
   await expect(page.locator('.select-slide')).toHaveCount(1);
@@ -79,9 +79,9 @@ test('編集、グリッドへの吸着、PPTXへの保存と再読み込み', a
 test('元部品の保持とスライドの並び替え・削除', async ({ page }, info) => {
   await page.goto('/');
   await page.locator('.rail [data-action="addSlide"]').click();
-  await page.getByRole('button', { name: 'タイトルのみ', exact: true }).click();
+  await page.getByRole('button', { name: 'header title', exact: true }).click();
   await page.locator('.rail [data-action="addSlide"]').click();
-  await page.getByRole('button', { name: 'タイトルのみ', exact: true }).click();
+  await page.getByRole('button', { name: 'header title', exact: true }).click();
   const original = info.outputPath('source.pptx');
   await download(page, original);
   await openFixture(page, original);

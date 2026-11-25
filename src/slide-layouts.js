@@ -24,20 +24,23 @@ import {
 
 const layouts = [
   {
-    key: 'TitleOnly',
-    label: 'タイトルのみ',
-    type: 'titleOnly',
-    placeholders: [['title', 0, 0.06, 0.06, 0.88, 0.17]],
-  },
-  {
     key: 'CenteredTitle',
-    label: '1_タイトル スライド',
+    label: 'title',
+    templateName: '1_タイトル スライド',
     type: 'cust',
     placeholders: [['ctrTitle', 0, 0.07, 0.37, 0.86, 0.25]],
   },
   {
+    key: 'TitleOnly',
+    label: 'header title',
+    templateName: 'タイトルのみ',
+    type: 'titleOnly',
+    placeholders: [['title', 0, 0.06, 0.06, 0.88, 0.17]],
+  },
+  {
     key: 'TitleContent',
-    label: 'タイトルとコンテンツ',
+    label: 'title and content',
+    templateName: 'タイトルとコンテンツ',
     type: 'obj',
     placeholders: [
       ['title', 0, 0.06, 0.06, 0.88, 0.17],
@@ -100,6 +103,9 @@ function fallback(xml, masterPath, definition, w, h) {
     path = dir + '/' + owner + '-' + definition.key + ++n + '.xml';
   const shapes = definition.placeholders
     .map(([type, idx, x, y, width, height], i) => {
+      const align = type === 'ctrTitle' ? 'ctr' : 'l';
+      const listIndent = type === 'obj' ? ` marL="${emu(27)}" indent="${emu(-18)}"` : '';
+      const marker = type === 'obj' ? '<a:buChar char="•"/>' : '';
       const shape = placeholderShape(
         {
           name: type === 'obj' ? 'Content' : 'Title',
@@ -126,11 +132,7 @@ function fallback(xml, masterPath, definition, w, h) {
         )
         .replace(
           '<a:lstStyle/>',
-          '<a:lstStyle><a:lvl1pPr algn="' +
-            (type === 'ctrTitle' ? 'ctr' : 'l') +
-            '"><a:defRPr sz="' +
-            (type === 'obj' ? 2400 : 3600) +
-            '"/></a:lvl1pPr></a:lstStyle>'
+          `<a:lstStyle><a:lvl1pPr algn="${align}"${listIndent}>${marker}<a:defRPr sz="${type === 'obj' ? 2400 : 3600}"/></a:lvl1pPr></a:lstStyle>`
         );
     })
     .join('');
@@ -219,7 +221,7 @@ function available(xml, masterPath) {
 function resolveLayout(xml, masterPath, def, w, h) {
   const choices = available(xml, masterPath);
   const match =
-    choices.find((l) => l.name === def.label) ||
+    choices.find((l) => l.name === def.templateName) ||
     choices.find((l) =>
       def.key === 'CenteredTitle'
         ? l.ph.length === 1 && l.ph[0] === 'ctrTitle'

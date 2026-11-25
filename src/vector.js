@@ -301,7 +301,8 @@ export function resizeDimensions(o, from, deltaW, deltaH, shift) {
   const min = o.kind === 'line' || o.kind === 'path' ? 0 : 1;
   let w = Math.max(min, from.w + deltaW),
     h = Math.max(min, from.h + deltaH);
-  if ((shift || !vectorKinds.has(o.kind)) && from.w > 0 && from.h > 0) {
+  const keepProportions = shift || (o.kind !== 'text' && !vectorKinds.has(o.kind));
+  if (keepProportions && from.w > 0 && from.h > 0) {
     // Project the pointer motion onto the original diagonal. Both horizontal
     // and vertical drags resize a tall or wide picture around the fixed corner.
     const ratio = Math.max(

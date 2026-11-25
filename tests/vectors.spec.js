@@ -123,6 +123,33 @@ test('Resizing an image with a predominantly horizontal drag preserves its propo
   );
 });
 
+test('Text-box handles change width and height independently', async ({ page }) => {
+  const { art } = await blank(page);
+  await art.dblclick({ position: { x: 90, y: 60 } });
+  const editor = page.getByRole('textbox', { name: 'Slide text' });
+  await editor.fill('Text box');
+  await editor.press('Meta+Enter');
+  const text = art.locator('.item:has(.item-text)');
+  await text.click();
+  const before = await text.boundingBox();
+  const handle = art.locator('[data-handle=se]');
+  const moveCorner = async (dx, dy) => {
+    const b = await handle.boundingBox();
+    const start = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    await drag(page, start, { x: start.x + dx, y: start.y + dy });
+  };
+  await page.keyboard.down('Alt');
+  await moveCorner(68, 0);
+  const wider = await text.boundingBox();
+  expect(wider.width - before.width).toBeCloseTo(68, 0);
+  expect(wider.height).toBeCloseTo(before.height, 1);
+  await moveCorner(0, 45);
+  await page.keyboard.up('Alt');
+  const taller = await text.boundingBox();
+  expect(taller.width).toBeCloseTo(wider.width, 1);
+  expect(taller.height - wider.height).toBeCloseTo(45, 0);
+});
+
 test('Custom geometry keeps compound-path cutouts and horizontal line vertices editable', async ({
   page,
 }) => {

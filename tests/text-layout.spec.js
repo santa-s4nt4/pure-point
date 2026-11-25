@@ -118,16 +118,16 @@ test('Slide layout choices create PowerPoint placeholders and reuse the selected
     };
   });
   expect(result.options.map((o) => o[0])).toEqual([
-    'タイトルのみ',
-    '1_タイトル スライド',
-    'タイトルとコンテンツ',
+    'title',
+    'header title',
+    'title and content',
   ]);
   expect(result.options.every((o) => o[2] === false)).toBe(true);
   expect(result.count).toBe(4);
   expect(result.options.map((o) => o[1])).toEqual(result.deck.map((s) => s[0]));
   expect(result.deck.map((s) => s[1])).toEqual([
-    [['title', 'Slide title', true]],
     [['ctrTitle', 'Slide title', true]],
+    [['title', 'Slide title', true]],
     [
       ['title', 'Slide title', true],
       ['obj', 'Body sample', true],
