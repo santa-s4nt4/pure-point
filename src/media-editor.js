@@ -74,14 +74,19 @@ function waitForMedia(video, event) {
   });
 }
 async function imageFile(file) {
-  const { mime, ext } = fileFormat(file, images),
+  // Clipboard image files can have no filename, or carry a PNG rendering of
+  // an image whose original filename had a different extension.
+  const ext =
+    Object.keys(images).find((key) => images[key] === file.type) ||
+    fileFormat(file, images).ext;
+  const mime = images[ext],
     image = new Image();
   const data = stored(mime, ext, await toData(file));
   image.src = data.value;
   await image.decode();
   return {
     kind: 'image',
-    name: file.name,
+    name: file.name || `Pasted image.${ext}`,
     w: image.naturalWidth,
     h: image.naturalHeight,
     files: [data],
@@ -242,6 +247,37 @@ function editableMedia(items, id) {
     }
   }
 }
+function mediaObject(result, deck, point) {
+  const ratio = Math.min(
+    (deck.w * 0.55) / result.w,
+    (deck.h * 0.65) / result.h,
+    1
+  );
+  const w = result.w * ratio,
+    h = result.h * ratio;
+  const x = point
+    ? Math.max(0, Math.min(deck.w - w, point.x - w / 2))
+    : (deck.w - w) / 2;
+  const y = point
+    ? Math.max(0, Math.min(deck.h - h, point.y - h / 2))
+    : (deck.h - h) / 2;
+  return shape(result.kind, result.name, x, y, w, h, result.props);
+}
+
+export async function readClipboardImages(files, deck, center) {
+  const items = [],
+    assets = {};
+  for (const [i, file] of files.entries()) {
+    const image = await imageFile(file);
+    put(image.files, assets);
+    const offset = i * 12;
+    items.push(
+      mediaObject(image, deck, { x: center.x + offset, y: center.y + offset })
+    );
+  }
+  return { items, assets };
+}
+
 export function createMediaEditor({
   getDeck,
   getAssets,
@@ -259,20 +295,7 @@ export function createMediaEditor({
       return;
     }
     put(result.files, getAssets());
-    const ratio = Math.min(
-      (deck.w * 0.55) / result.w,
-      (deck.h * 0.65) / result.h,
-      1
-    );
-    const w = result.w * ratio,
-      h = result.h * ratio;
-    const x = point
-      ? Math.max(0, Math.min(deck.w - w, point.x - w / 2))
-      : (deck.w - w) / 2;
-    const y = point
-      ? Math.max(0, Math.min(deck.h - h, point.y - h / 2))
-      : (deck.h - h) / 2;
-    addObject(shape(result.kind, result.name, x, y, w, h, result.props));
+    addObject(mediaObject(result, deck, point));
   }
   async function chooseMedia(kind) {
     if (kind === 'embed') {

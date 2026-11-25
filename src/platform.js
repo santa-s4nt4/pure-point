@@ -9,9 +9,21 @@ export const fileName = (path) =>
     .pop()
     ?.replace(/\.pptx$/i, '') || 'untitled';
 export const shareDocumentMode = (path) =>
-  native && path ? invoke('share_document_mode', { path }) : Promise.resolve('none');
-export const revealShareDocument = (path) => invoke('reveal_share_document', { path });
-export const copyOrganizationLink = (path) => invoke('copy_organization_link', { path });
+  native && path
+    ? invoke('share_document_mode', { path })
+    : Promise.resolve('none');
+export const revealShareDocument = (path) =>
+  invoke('reveal_share_document', { path });
+export const copyOrganizationLink = (path) =>
+  invoke('copy_organization_link', { path });
+export async function readCanvasClipboard() {
+  const data = await invoke('read_canvas_clipboard');
+  const images = data.images.map(({ data: encoded, mime, name }) => {
+    const bytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
+    return new File([bytes], name, { type: mime });
+  });
+  return { html: data.html, text: data.text, images };
+}
 export async function nativeEvents(callback) {
   if (native) await listen('editor-command', (e) => callback(e.payload));
 }

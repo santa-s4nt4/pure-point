@@ -30,7 +30,7 @@ import {
 } from './clipboard-media.js';
 import { captureOfficeObject, validateOfficeCopies } from './office-copy.js';
 import './style.css';
-import { createMediaEditor } from './media-editor.js';
+import { createMediaEditor, readClipboardImages } from './media-editor.js';
 import './workspace.css';
 import {
   workspace,
@@ -246,10 +246,12 @@ async function refreshSharing() {
   const mode = await platform.shareDocumentMode(file).catch(() => 'none');
   if (!file || path !== file || !['graph', 'finder'].includes(mode)) return;
   shareMode = mode;
-  shareButton.querySelector('span').textContent = mode === 'graph' ? 'Copy link' : 'Share…';
-  shareButton.title = mode === 'graph'
-    ? 'Copy a link that people at Dentsu can use to edit this file'
-    : 'Share this file using OneDrive in Finder';
+  shareButton.querySelector('span').textContent =
+    mode === 'graph' ? 'Copy link' : 'Share…';
+  shareButton.title =
+    mode === 'graph'
+      ? 'Copy a link that people at Dentsu can use to edit this file'
+      : 'Share this file using OneDrive in Finder';
   shareButton.hidden = false;
 }
 async function shareDocument() {
@@ -272,8 +274,12 @@ async function shareDocument() {
     }
     const answer = await dialog(
       'Share in OneDrive',
-      message + 'In Finder, Control-click the selected presentation and choose OneDrive’s Share command. In Link settings, select “People in Dentsu” and “Can edit”, then choose “Copy link”.',
-      [['cancel', 'Cancel'], ['reveal', 'Show in Finder']]
+      message +
+        'In Finder, Control-click the selected presentation and choose OneDrive’s Share command. In Link settings, select “People in Dentsu” and “Can edit”, then choose “Copy link”.',
+      [
+        ['cancel', 'Cancel'],
+        ['reveal', 'Show in Finder'],
+      ]
     );
     if (answer === 'reveal') await platform.revealShareDocument(file);
   } finally {
@@ -1099,20 +1105,7 @@ function updateObject(key, value) {
       }
   }
   if (o.autoWidth && (runStyle || paragraphStyle)) {
-    const node = itemNode(o, assets);
-    node.style.cssText +=
-      ';position:fixed;visibility:hidden;left:-100000px;top:0';
-    document.body.append(node);
-    const text = node.querySelector('.item-text');
-    Object.assign(text.style, {
-      width: 'max-content',
-      height: 'auto',
-      right: 'auto',
-      bottom: 'auto',
-    });
-    o.w = Math.max(2, text.offsetWidth);
-    o.h = Math.max(o.size * singleLine, text.offsetHeight);
-    node.remove();
+    measureTextBox(o);
   }
   const provisional = editing?.creation && !o.text;
   if (!provisional) record(before);
@@ -1150,15 +1143,97 @@ function addObject(o) {
     tool = 'pointer';
   });
 }
+function measureTextBox(object, maxWidth) {
+  const node = itemNode(object, assets);
+  Object.assign(node.style, {
+    position: 'fixed',
+    visibility: 'hidden',
+    left: '-100000px',
+    top: '0',
+    transform: 'none',
+  });
+  const text = node.querySelector('.item-text');
+  Object.assign(text.style, {
+    width: 'max-content',
+    height: 'auto',
+    right: 'auto',
+    bottom: 'auto',
+  });
+  if (maxWidth !== undefined) text.style.maxWidth = maxWidth + 'px';
+  document.body.append(node);
+  const box = text.getBoundingClientRect();
+  object.w = Math.max(2, Math.ceil(box.width));
+  object.h = Math.max(object.size * singleLine, Math.ceil(box.height));
+  node.remove();
+}
+
+function visibleSlide() {
+  const paper = $('.artboard').getBoundingClientRect();
+  const view = $('.viewport').getBoundingClientRect();
+  const left = Math.max(0, (view.left - paper.left) / scale);
+  const right = Math.min(deck.w, (view.right - paper.left) / scale);
+  const top = Math.max(0, (view.top - paper.top) / scale);
+  const bottom = Math.min(deck.h, (view.bottom - paper.top) / scale);
+  if (right <= left || bottom <= top)
+    return { x: 0, y: 0, w: deck.w, h: deck.h };
+  return { x: left, y: top, w: right - left, h: bottom - top };
+}
+
+const canvasClipboardAvailable = (target) =>
+  !busy &&
+  !present &&
+  !overview &&
+  !editor &&
+  !drag &&
+  !document.querySelector('dialog[open]') &&
+  !target?.closest?.('input,textarea,select,[contenteditable="true"]');
+
 const clipboard = objectClipboard({
-  available: (target) =>
-    !busy &&
-    !present &&
-    !overview &&
-    !editor &&
-    !drag &&
-    !document.querySelector('dialog[open]') &&
-    !target?.closest?.('input,textarea,select,[contenteditable="true"]'),
+  available: canvasClipboardAvailable,
+  destination: active,
+  async insertExternal({ images, text }, destination) {
+    if (
+      destination !== active() ||
+      !canvasClipboardAvailable(document.activeElement)
+    )
+      return;
+    const originalDeck = deck;
+    const visible = visibleSlide();
+    const center = {
+      x: visible.x + visible.w / 2,
+      y: visible.y + visible.h / 2,
+    };
+    let items, media;
+    if (images?.length) {
+      ({ items, assets: media } = await readClipboardImages(
+        images,
+        deck,
+        center
+      ));
+      if (
+        deck !== originalDeck ||
+        destination !== active() ||
+        !canvasClipboardAvailable(document.activeElement)
+      )
+        return;
+    } else if (text) {
+      const object = textItem(text, 0, 0, 2, 0, 24, { font: 'Yu Gothic' });
+      measureTextBox(object, Math.max(object.size, deck.w * 0.85));
+      // When zoomed into the slide, keep the start of a large paragraph in view.
+      const x = Math.max(visible.x, center.x - object.w / 2);
+      const y = Math.max(visible.y, center.y - object.h / 2);
+      object.x = Math.max(0, Math.min(deck.w - object.w, x));
+      object.y = Math.max(0, Math.min(deck.h - object.h, y));
+      items = [object];
+    } else return;
+    change(() => {
+      if (media) Object.assign(assets, media);
+      destination.items.push(...items);
+      pickedSlides.clear();
+      setSelection(items.map((object) => object.id));
+      tool = 'pointer';
+    });
+  },
   capture() {
     const slide = active();
     const items = copiesOnSlide(slide.items, selectedIds(), (o) =>
@@ -1656,7 +1731,8 @@ function objectMenu(e) {
     return;
   const row = e.target.closest('[data-layer-row]'),
     item = e.target.closest('[data-id]');
-  if (!row && !e.target.closest('.artboard')) return;
+  const layerPane = tab === 'layers' && e.target.closest('#properties');
+  if (!layerPane && !e.target.closest('.viewport')) return;
   e.preventDefault();
   finishText();
   const id = row?.dataset.layerRow || item?.dataset.id;
@@ -1698,7 +1774,7 @@ function objectMenu(e) {
       'lock',
     ]);
   }
-  if (clipboard.hasObjects) rows.push(['pasteObjects', 'Paste', 'paste', '⌘V']);
+  rows.push(['pasteObjects', 'Paste', 'paste', '⌘V']);
   rows.push(['selectionComment', 'Add comment…', 'comment']);
   if (entries.some((entry) => !entry.locked))
     rows.push(['delete', 'Delete', 'delete']);

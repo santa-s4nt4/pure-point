@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod clipboard;
 mod fonts;
 mod gestures;
 mod movies;
@@ -235,6 +236,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            clipboard::read_canvas_clipboard,
             open_document,
             open_template,
             sharing::share_document_mode,

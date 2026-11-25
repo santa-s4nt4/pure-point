@@ -1,12 +1,46 @@
 import { uid } from './model.js';
 import { esc } from './xml.js';
 import { releaseClipboardMedia } from './clipboard-media.js';
+import { native, readCanvasClipboard } from './platform.js';
 
 // Native Edit > Copy/Paste and the macOS keyboard shortcuts send DOM clipboard
 // events to the webview. Keep media in its original store; only the selection
 // token and a human-readable text representation go on the system pasteboard.
 const mime = 'application/x-pure-point-objects';
-export function objectClipboard({ available, capture, insert, onError }) {
+const isImage = (type) => /^image\/(png|jpeg|gif|webp)$/i.test(type);
+
+async function readBrowserClipboard() {
+  if (!navigator.clipboard?.read)
+    throw Error('Press ⌘V on the canvas to paste from the clipboard.');
+  const data = { html: '', text: '', images: [] };
+  for (const item of await navigator.clipboard.read()) {
+    const imageType = item.types.find(isImage);
+    if (imageType) {
+      const blob = await item.getType(imageType);
+      data.images.push(
+        new File([blob], 'Pasted image.' + imageType.split('/')[1], {
+          type: imageType,
+        })
+      );
+    }
+    if (!data.html && item.types.includes('text/html'))
+      data.html = await (await item.getType('text/html')).text();
+    if (item.types.includes('text/plain')) {
+      const text = await (await item.getType('text/plain')).text();
+      data.text += (data.text ? '\n' : '') + text;
+    }
+  }
+  return data;
+}
+
+export function objectClipboard({
+  available,
+  destination,
+  capture,
+  insert,
+  insertExternal,
+  onError,
+}) {
   let clip;
   function copy(event) {
     if (!available(event.target) || !event.clipboardData) return;
@@ -28,55 +62,74 @@ export function objectClipboard({ available, capture, insert, onError }) {
       onError(error);
     }
   }
-  function paste(event) {
-    if (!available(event.target) || !clip) return;
-    const data = event.clipboardData;
-    if (
-      !data ||
-      (data.getData(mime) !== clip.token &&
-        !data
-          .getData('text/html')
-          .includes(`data-pure-point-objects="${clip.token}"`))
-    )
-      return;
-    event.preventDefault();
-    try {
+  function isInternal(data) {
+    return (
+      clip &&
+      (data.token === clip.token ||
+        data.html?.includes(`data-pure-point-objects="${clip.token}"`))
+    );
+  }
+  async function place(data, slide) {
+    if (destination() !== slide || !available(document.activeElement)) return;
+    if (isInternal(data)) {
       insert(clip);
-    } catch (error) {
-      onError(error);
+      return;
     }
+    const text = (data.text || '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '');
+    if (data.images.length || text)
+      await insertExternal({ images: data.images, text }, slide);
+  }
+  function paste(event) {
+    if (!available(event.target)) return;
+    const data = event.clipboardData;
+    // DataTransfer is only readable during the paste event.
+    let files = Array.from(data?.files || []);
+    if (!files.length && data?.items) {
+      files = Array.from(data.items, (item) => item.getAsFile()).filter(
+        Boolean
+      );
+    }
+    const transfer = {
+      token: data?.getData(mime),
+      html: data?.getData('text/html'),
+      text: data?.getData('text/plain'),
+      images: files.filter((f) => isImage(f.type)),
+    };
+    const hasFiles = files.length > 0 || data?.types.includes('Files');
+    const fileUrls = /^file:/im.test(data?.getData('text/uri-list') || '');
+    const hasContent =
+      isInternal(transfer) ||
+      transfer.images.length > 0 ||
+      (transfer.text && !hasFiles && !fileUrls);
+    // Finder can advertise a file selection with only a thumbnail visible to WebKit.
+    const readNative =
+      native &&
+      event.isTrusted &&
+      !isInternal(transfer) &&
+      (!hasContent || fileUrls || transfer.images.length < files.length);
+    if (!readNative && !hasContent) return;
+    event.preventDefault();
+    const slide = destination();
+    const payload = readNative
+      ? readCanvasClipboard()
+      : Promise.resolve(transfer);
+    payload.then((value) => place(value, slide)).catch(onError);
   }
   document.addEventListener('copy', copy);
   document.addEventListener('paste', paste);
   return {
-    get hasObjects() {
-      return Boolean(clip);
-    },
     copy() {
       document.execCommand('copy');
     },
     async paste() {
-      if (!clip) return;
-      // A context-menu click is a user gesture. Prefer the current system
-      // clipboard when the browser grants access to its HTML representation.
-      if (navigator.clipboard?.read) {
-        try {
-          const values = await navigator.clipboard.read();
-          for (const value of values) {
-            if (!value.types.includes('text/html')) continue;
-            const html = await (await value.getType('text/html')).text();
-            if (html.includes(`data-pure-point-objects="${clip.token}"`)) {
-              if (available(document.activeElement)) insert(clip);
-              return;
-            }
-          }
-          return;
-        } catch (error) {
-          if (!['NotAllowedError', 'NotSupportedError'].includes(error.name))
-            throw error;
-        }
-      }
-      if (available(document.activeElement)) insert(clip);
+      if (!available(document.activeElement)) return;
+      const slide = destination();
+      const data = native
+        ? await readCanvasClipboard()
+        : await readBrowserClipboard();
+      await place(data, slide);
     },
   };
 }
