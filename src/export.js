@@ -32,7 +32,7 @@ import {
   solid,
 } from './xml.js';
 import { relationships } from './import.js';
-import { replaceRunText,updateText } from './text.js';
+import { replaceRunText, updateText } from './text.js';
 import { template, slideType } from './template.js';
 
 const xfrm = (o) =>
@@ -53,68 +53,36 @@ function lineSpacingXml(value) {
 }
 function textBody(o) {
   const [l, t, r, b] = o.inset.map(emu);
-  const paragraphs =
-    o.paragraphs ||
-    o.text.split('\n').map((text) => ({ runs: [{ ...o, text }] }));
+  let paragraphs = o.paragraphs;
+  if (
+    paragraphs &&
+    paragraphs.map((p) => p.runs.map((r) => r.text).join('')).join('\n') !==
+      o.text
+  ) {
+    const normalized = { ...o };
+    updateText(normalized, o.text);
+    paragraphs = normalized.paragraphs;
+  }
+  paragraphs ??= o.text.split('\n').map((text) => ({ runs: [{ ...o, text }] }));
   const runProps = (style) =>
-    'lang="ja-JP" spc="' +
-    Math.round((style.letterSpacing || 0) * 100) +
-    '" sz="' +
-    Math.round(style.size * 100) +
-    '" b="' +
-    Number(Boolean(style.bold)) +
-    '" i="' +
-    Number(Boolean(style.italic)) +
-    '"';
+    `lang="ja-JP" spc="${Math.round((style.letterSpacing || 0) * 100)}" sz="${Math.round(style.size * 100)}" b="${Number(Boolean(style.bold))}" i="${Number(Boolean(style.italic))}"`;
   const runs = paragraphs
     .map((p) => {
       const style = p.base || o;
-      const props =
-        '<a:pPr algn="' +
-        align(p.align || o.align) +
-        '" marL="' +
-        emu(p.margin || 0) +
-        '" indent="' +
-        emu(p.indent || 0) +
-        '"><a:lnSpc>' +
-        lineSpacingXml(p.lineHeight ?? o.lineHeight) +
-        '</a:lnSpc><a:spcBef><a:spcPts val="' +
-        Math.round((p.before || 0) * 100) +
-        '"/></a:spcBef><a:spcAft><a:spcPts val="' +
-        Math.round((p.after || 0) * 100) +
-        '"/></a:spcAft>' +
-        (p.bullet
-          ? '<a:buChar char="' + esc(p.bullet) + '"/>'
-          : '<a:buNone/>') +
-        '</a:pPr>';
+      const bullet = p.bullet
+        ? `<a:buChar char="${esc(p.bullet)}"/>`
+        : '<a:buNone/>';
+      const props = `<a:pPr algn="${align(p.align || o.align)}" marL="${emu(p.margin || 0)}" indent="${emu(p.indent || 0)}"><a:lnSpc>${lineSpacingXml(p.lineHeight ?? o.lineHeight)}</a:lnSpc><a:spcBef><a:spcPts val="${Math.round((p.before || 0) * 100)}"/></a:spcBef><a:spcAft><a:spcPts val="${Math.round((p.after || 0) * 100)}"/></a:spcAft>${bullet}</a:pPr>`;
       const text = p.runs
         .map((run) => {
-          const attrs =
-            '<a:rPr ' +
-            runProps(run) +
-            '>' +
-            solid(run.color) +
-            typefaces(run) +
-            '</a:rPr>';
+          const attrs = `<a:rPr ${runProps(run)}>${solid(run.color)}${typefaces(run)}</a:rPr>`;
           return run.text
             .split('\n')
-            .map(
-              (line) => '<a:r>' + attrs + '<a:t>' + esc(line) + '</a:t></a:r>'
-            )
-            .join('<a:br>' + attrs + '</a:br>');
+            .map((line) => `<a:r>${attrs}<a:t>${esc(line)}</a:t></a:r>`)
+            .join(`<a:br>${attrs}</a:br>`);
         })
         .join('');
-      return (
-        '<a:p>' +
-        props +
-        text +
-        '<a:endParaRPr ' +
-        runProps(style) +
-        '>' +
-        solid(style.color) +
-        typefaces(style) +
-        '</a:endParaRPr></a:p>'
-      );
+      return `<a:p>${props}${text}<a:endParaRPr ${runProps(style)}>${solid(style.color)}${typefaces(style)}</a:endParaRPr></a:p>`;
     })
     .join('');
   return `<p:txBody><a:bodyPr wrap="${o.autoWidth ? 'none' : 'square'}" lIns="${l}" tIns="${t}" rIns="${r}" bIns="${b}" anchor="${{ middle: 'ctr', bottom: 'b' }[o.valign] || 't'}">${o.autoWidth ? '<a:spAutoFit/>' : '<a:noAutofit/>'}</a:bodyPr><a:lstStyle/>${runs}</p:txBody>`;
@@ -211,7 +179,14 @@ function patchOriginal(n, o, old, reparented = false) {
       // Reuse run and paragraph markup for edits within existing paragraphs.
       // A run keeps its formatting and hyperlink when its characters survive.
       const paragraphs = children(body, 'p'),
-        lines = children(next,'p').map(p=>children(p).filter(r=>['r','fld','br'].includes(r.localName)).map(r=>r.localName==='br'?'\n':child(r,'t')?.textContent || '').join(''));
+        lines = children(next, 'p').map((p) =>
+          children(p)
+            .filter((r) => ['r', 'fld', 'br'].includes(r.localName))
+            .map((r) =>
+              r.localName === 'br' ? '\n' : child(r, 't')?.textContent || ''
+            )
+            .join('')
+        );
       lines.forEach((line, i) => {
         const p = paragraphs[i];
         if (!p) {
