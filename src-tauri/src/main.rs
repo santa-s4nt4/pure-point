@@ -27,7 +27,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Default)]
 struct Documents {
-    sources: Mutex<HashMap<u64, Arc<Vec<u8>>>>,
+    sources: Mutex<HashMap<u64, Arc<package::Source>>>,
     sequence: AtomicU64,
     incoming: Mutex<Option<PathBuf>>,
     dirty: AtomicBool,
@@ -54,13 +54,18 @@ async fn open_document(
             .map(|f| f.path().to_owned())
     };
     let Some(path) = path else { return Ok(None) };
-    read_document(&state, path).map(Some)
+    read_document(&state, path).await.map(Some)
 }
-fn read_document(state: &Documents, path: PathBuf) -> Result<Opened, String> {
-    let bytes = package::read(&path)?;
-    let parts = package::preview(&bytes)?;
+async fn read_document(state: &Documents, path: PathBuf) -> Result<Opened, String> {
+    let (path, source, parts) = tauri::async_runtime::spawn_blocking(move || {
+        let source = package::read(&path)?;
+        let parts = package::preview(&source)?;
+        Ok::<_, String>((path, source, parts))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     let id = state.sequence.fetch_add(1, Ordering::Relaxed);
-    state.sources.lock().unwrap().insert(id, Arc::new(bytes));
+    state.sources.lock().unwrap().insert(id, source);
     Ok(Opened { id, path, parts })
 }
 #[tauri::command]
@@ -78,12 +83,15 @@ async fn open_template(
         Err(e) => return Err(format!("Could not access {}: {e}", path.display())),
         Ok(_) => {}
     }
-    read_document(&state, path.clone()).map(Some).map_err(|e| {
-        format!(
-            "Could not open {}. Check that the template is available in OneDrive. {e}",
-            path.display()
-        )
-    })
+    read_document(&state, path.clone())
+        .await
+        .map(Some)
+        .map_err(|e| {
+            format!(
+                "Could not open {}. Check that the template is available in OneDrive. {e}",
+                path.display()
+            )
+        })
 }
 #[tauri::command]
 fn release_document(state: State<Documents>, id: u64) {
@@ -110,7 +118,7 @@ async fn save_document(
             None => return Ok(None),
         },
     };
-    let bytes = match source {
+    let source = match source {
         Some(id) => Some(
             state
                 .sources
@@ -122,8 +130,12 @@ async fn save_document(
         ),
         None => None,
     };
-    package::save(&path, bytes.as_ref().map(|b| b.as_slice()), changes)?;
-    Ok(Some(path))
+    tauri::async_runtime::spawn_blocking(move || {
+        package::save(&path, source.as_deref(), changes)?;
+        Ok(Some(path))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[derive(Serialize)]
 struct Typeface {
@@ -261,7 +273,10 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("pure-point could not start")
         .run(|app, event| match event {
-            tauri::RunEvent::Exit => movies::clear(),
+            tauri::RunEvent::Exit => {
+                movies::clear();
+                app.state::<Documents>().sources.lock().unwrap().clear();
+            }
             tauri::RunEvent::Opened { urls } => {
                 if let Some(path) = urls.iter().filter_map(|u| u.to_file_path().ok()).find(|p| {
                     p.extension()

@@ -58,8 +58,9 @@
     // works even when the user's editor window is smaller than the slide.
     NSString *script=@"const pages=document.querySelectorAll('main>section');"
         "if(!pages[index]) throw Error('Missing PDF page');"
-        "if(index) pages[index-1].hidden=true;"
+        "if(index){const old=pages[index-1];old.hidden=true;old.replaceChildren();}"
         "const page=pages[index];page.hidden=false;void page.offsetHeight;"
+        "for(const i of page.querySelectorAll('img[data-print-src]')) i.src=i.dataset.printSrc;"
         "await Promise.all([...page.querySelectorAll('img')].map(i=>i.decode().catch(()=>{})));"
         "await document.fonts.ready;void page.offsetHeight;return true;";
     [self.view callAsyncJavaScript:script arguments:@{@"index":@(self.index)} inFrame:nil

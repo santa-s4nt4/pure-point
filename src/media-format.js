@@ -73,6 +73,15 @@ export const videoTypes = {
   avi: 'video/x-msvideo',
   wmv: 'video/x-ms-wmv',
 };
+// Imported native media is served from a local, tokenized URL. Newly inserted
+// images and the browser editor can still supply a data URL directly.
+export const mediaURL = (asset) => asset?.url || asset || '';
+export function setImageSource(img, asset, deferred) {
+  const url = mediaURL(asset);
+  if (!url) return;
+  if (deferred) img.dataset.printSrc = url;
+  else img.src = url;
+}
 export function mediaMime(path) {
   const ext = path.split('.').pop().toLowerCase();
   const image = {

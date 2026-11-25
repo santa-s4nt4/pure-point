@@ -187,7 +187,11 @@ test('Copying grouped media retains the movie until the last document closes and
     const picture = 'ppt/media/image1.png',
       movie = 'ppt/media/movie1.mp4';
     const source = {
-      [picture]: 'data:image/png;base64,YQ==',
+      [picture]: {
+        token: 'picture-fixture',
+        url: 'http://127.0.0.1/picture-fixture',
+        mime: 'image/png',
+      },
       [movie]: {
         token: 'fixture',
         url: 'http://127.0.0.1/fixture',
@@ -235,6 +239,6 @@ test('Copying grouped media retains the movie until the last document closes and
     movies: 1,
     noCollision: true,
     beforeClose: [],
-    released: ['fixture'],
+    released: ['picture-fixture', 'fixture'],
   });
 });

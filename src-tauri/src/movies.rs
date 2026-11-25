@@ -12,7 +12,9 @@ use std::{
     thread,
     time::Duration,
 };
-use tempfile::TempDir;
+use tempfile::{NamedTempFile, TempDir, TempPath};
+
+use crate::package::Source;
 
 extern "C" {
     fn pp_prepare_movie(
@@ -26,15 +28,71 @@ extern "C" {
 }
 
 struct CacheEntry {
-    _dir: TempDir,
-    file: PathBuf,
+    backing: MediaBacking,
     mime: String,
+    size: u64,
+}
+
+enum MediaBacking {
+    Imported {
+        _dir: TempDir,
+        file: PathBuf,
+    },
+    Stored {
+        source: Arc<Source>,
+        offset: u64,
+    },
+    Compressed {
+        source: Arc<Source>,
+        index: usize,
+        extracted: Mutex<Option<TempPath>>,
+    },
+}
+
+impl CacheEntry {
+    fn open_range(&self, start: u64, count: u64) -> io::Result<io::Take<File>> {
+        let (mut file, base) = match &self.backing {
+            MediaBacking::Imported { file, .. } => (File::open(file)?, 0),
+            MediaBacking::Stored { source, offset } => {
+                (source.open().map_err(io::Error::other)?, *offset)
+            }
+            MediaBacking::Compressed {
+                source,
+                index,
+                extracted,
+            } => {
+                let mut cached = extracted.lock().unwrap();
+                if cached.is_none() {
+                    let file = source.open().map_err(io::Error::other)?;
+                    let mut archive = zip::ZipArchive::new(BufReader::new(file))?;
+                    let member = archive.by_index(*index)?;
+                    let mut temp = NamedTempFile::new()?;
+                    let bytes = io::copy(&mut member.take(self.size.saturating_add(1)), &mut temp)?;
+                    if bytes != self.size {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Incorrect media size in the presentation.",
+                        ));
+                    }
+                    // A document can contain more media parts than the process's
+                    // open-file limit. Keep the path and reopen on each request.
+                    *cached = Some(temp.into_temp_path());
+                }
+                (File::open(cached.as_ref().unwrap())?, 0)
+            }
+        };
+        let position = base
+            .checked_add(start)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid media offset."))?;
+        file.seek(SeekFrom::Start(position))?;
+        Ok(file.take(count))
+    }
 }
 
 static FILES: LazyLock<Mutex<HashMap<String, Arc<CacheEntry>>>> = LazyLock::new(Default::default);
 static UPLOADS: LazyLock<Mutex<HashMap<String, Upload>>> = LazyLock::new(Default::default);
 static ADDRESS: OnceLock<Result<SocketAddr, String>> = OnceLock::new();
-const MAX_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_VIDEO_IMPORT_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Serialize, Clone)]
 pub struct MovieAsset {
@@ -76,12 +134,13 @@ fn entry(id: &str) -> Result<Arc<CacheEntry>, String> {
         .unwrap()
         .get(id)
         .cloned()
-        .ok_or_else(|| "The local movie is no longer available.".into())
+        .ok_or_else(|| "The local media is no longer available.".into())
 }
-pub fn open_file(id: &str) -> Result<File, String> {
-    File::open(&entry(id)?.file).map_err(|e| e.to_string())
+pub fn open_file(id: &str) -> Result<io::Take<File>, String> {
+    let item = entry(id)?;
+    item.open_range(0, item.size).map_err(|e| e.to_string())
 }
-fn register(dir: TempDir, file: PathBuf, mime: &str) -> Result<MovieAsset, String> {
+fn register(backing: MediaBacking, size: u64, mime: &str) -> Result<MovieAsset, String> {
     let addr = ADDRESS
         .get_or_init(start_server)
         .as_ref()
@@ -90,8 +149,8 @@ fn register(dir: TempDir, file: PathBuf, mime: &str) -> Result<MovieAsset, Strin
     FILES.lock().unwrap().insert(
         id.clone(),
         Arc::new(CacheEntry {
-            _dir: dir,
-            file,
+            backing,
+            size,
             mime: mime.to_owned(),
         }),
     );
@@ -101,12 +160,31 @@ fn register(dir: TempDir, file: PathBuf, mime: &str) -> Result<MovieAsset, Strin
         mime: mime.to_owned(),
     })
 }
-pub fn extract(
-    input: &mut impl Read,
-    ext: &str,
-    mime: &str,
+pub fn register_package(
+    source: Arc<Source>,
+    index: usize,
+    offset: Option<u64>,
     size: u64,
+    mime: &str,
 ) -> Result<MovieAsset, String> {
+    // Stored entries can be served directly from the archive. A seekable
+    // playback file is needed for compressed entries only when first read.
+    let backing = match offset {
+        Some(offset) => MediaBacking::Stored { source, offset },
+        None => MediaBacking::Compressed {
+            source,
+            index,
+            extracted: Mutex::default(),
+        },
+    };
+    register(backing, size, mime)
+}
+
+fn register_import(dir: TempDir, file: PathBuf, mime: &str) -> Result<MovieAsset, String> {
+    let size = fs::metadata(&file).map_err(|e| e.to_string())?.len();
+    register(MediaBacking::Imported { _dir: dir, file }, size, mime)
+}
+fn extract(input: &mut impl Read, ext: &str, mime: &str, size: u64) -> Result<MovieAsset, String> {
     let dir = new_dir()?;
     let path = dir.path().join(format!("movie.{ext}"));
     let mut output = File::create(&path).map_err(|e| e.to_string())?;
@@ -114,10 +192,10 @@ pub fn extract(
     if written != size {
         return Err("Invalid movie size in the presentation.".into());
     }
-    register(dir, path, mime)
+    register_import(dir, path, mime)
 }
 fn prepare(source: &Path, name: String) -> Result<Prepared, String> {
-    if fs::metadata(source).map_err(|e| e.to_string())?.len() > MAX_BYTES {
+    if fs::metadata(source).map_err(|e| e.to_string())?.len() > MAX_VIDEO_IMPORT_BYTES {
         return Err("The video exceeds 512 MB.".into());
     }
     let dir = new_dir()?;
@@ -168,7 +246,7 @@ fn prepare(source: &Path, name: String) -> Result<Prepared, String> {
         name,
         w,
         h,
-        asset: register(dir, path, "video/mp4")?,
+        asset: register_import(dir, path, "video/mp4")?,
         poster,
     })
 }
@@ -199,7 +277,7 @@ pub async fn pick_movie() -> Result<Option<Prepared>, String> {
 }
 #[tauri::command]
 pub fn start_movie_upload(name: String, size: u64) -> Result<String, String> {
-    if size == 0 || size > MAX_BYTES {
+    if size == 0 || size > MAX_VIDEO_IMPORT_BYTES {
         return Err("Choose a video between 1 byte and 512 MB.".into());
     }
     let ext = Path::new(&name)
@@ -292,7 +370,7 @@ fn start_server() -> Result<SocketAddr, String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
     thread::Builder::new()
-        .name("local-movies".into())
+        .name("local-media".into())
         .spawn(move || {
             for stream in listener.incoming().flatten() {
                 thread::spawn(move || {
@@ -354,8 +432,7 @@ fn serve(mut stream: TcpStream, addr: SocketAddr) -> io::Result<()> {
             b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         );
     };
-    let mut file = File::open(&item.file)?;
-    let size = file.metadata()?.len();
+    let size = item.size;
     let (start, count, status, extra) = if let Some(r) = range {
         let Some((start, end)) = byte_range(&r, size) else {
             return write!(stream,"HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{size}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
@@ -369,10 +446,17 @@ fn serve(mut stream: TcpStream, addr: SocketAddr) -> io::Result<()> {
     } else {
         (0, size, "200 OK", String::new())
     };
-    write!(stream,"HTTP/1.1 {status}\r\nContent-Type: {}\r\nAccess-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n{extra}Content-Length: {count}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",item.mime)?;
-    if method == Some("GET") {
-        file.seek(SeekFrom::Start(start))?;
-        io::copy(&mut file.take(count), &mut stream)?;
+    let body = if method == Some("GET") {
+        match item.open_range(start, count) {
+            Ok(reader) => Some(reader),
+            Err(_) => return stream.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+        }
+    } else {
+        None
+    };
+    write!(stream,"HTTP/1.1 {status}\r\nContent-Type: {}\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'\r\nAccess-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n{extra}Content-Length: {count}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",item.mime)?;
+    if let Some(mut reader) = body {
+        io::copy(&mut reader, &mut stream)?;
     }
     Ok(())
 }
@@ -381,6 +465,87 @@ fn serve(mut stream: TcpStream, addr: SocketAddr) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::package;
+
+    fn request(asset: &MovieAsset, method: &str, headers: &str) -> (String, Vec<u8>) {
+        let (address, id) = asset
+            .url
+            .strip_prefix("http://")
+            .unwrap()
+            .split_once('/')
+            .unwrap();
+        let mut stream = TcpStream::connect(address).unwrap();
+        write!(
+            stream,
+            "{method} /{id} HTTP/1.1\r\nHost: {address}\r\n{headers}\r\n"
+        )
+        .unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).unwrap();
+        let split = response.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+        let body = response.split_off(split + 4);
+        (String::from_utf8(response).unwrap(), body)
+    }
+
+    #[test]
+    fn archive_media_streams_only_its_own_bytes_and_inflates_on_demand() {
+        use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pictures.pptx");
+        let mut archive = ZipWriter::new(File::create(&path).unwrap());
+        for (part, compression, bytes) in [
+            (
+                "ppt/media/stored.png",
+                CompressionMethod::Stored,
+                &b"stored-picture"[..],
+            ),
+            (
+                "ppt/media/compressed.png",
+                CompressionMethod::Deflated,
+                &b"compressed-picture"[..],
+            ),
+        ] {
+            archive
+                .start_file(
+                    part,
+                    SimpleFileOptions::default().compression_method(compression),
+                )
+                .unwrap();
+            archive.write_all(bytes).unwrap();
+        }
+        archive.finish().unwrap();
+        let preview = package::preview(&package::read(&path).unwrap()).unwrap();
+        let stored = &preview.media["ppt/media/stored.png"];
+        let compressed = &preview.media["ppt/media/compressed.png"];
+        assert!(matches!(
+            entry(&stored.token).unwrap().backing,
+            MediaBacking::Stored { .. }
+        ));
+        let asset = entry(&compressed.token).unwrap();
+        let MediaBacking::Compressed { extracted, .. } = &asset.backing else {
+            panic!("Expected a compressed member")
+        };
+        assert!(extracted.lock().unwrap().is_none());
+        let (headers, body) = request(compressed, "HEAD", "");
+        assert!(headers.contains("Content-Length: 18"));
+        assert!(body.is_empty());
+        assert!(extracted.lock().unwrap().is_none());
+        assert_eq!(request(stored, "GET", "").1, b"stored-picture");
+        assert_eq!(
+            request(stored, "GET", "Range: bytes=7-9999\r\n").1,
+            b"picture"
+        );
+        assert!(request(stored, "GET", "Range: bytes=20-\r\n")
+            .0
+            .contains("416 Range Not Satisfiable"));
+        assert_eq!(
+            request(compressed, "GET", "Range: bytes=-7\r\n").1,
+            b"picture"
+        );
+        assert!(extracted.lock().unwrap().is_some());
+        release_movies(vec![stored.token.clone(), compressed.token.clone()]);
+        assert!(open_file(&stored.token).is_err());
+        assert!(request(compressed, "GET", "").0.contains("404 Not Found"));
+    }
 
     #[test]
     fn dropped_movie_streams_seeks_and_reopens_from_powerpoint() {
@@ -406,28 +571,10 @@ mod tests {
             movie.w > 0. && movie.h > 0. && movie.poster.starts_with("data:image/png;base64,iVBOR")
         );
         let cached = entry(&movie.asset.token).unwrap();
-        let size = fs::metadata(&cached.file).unwrap().len();
-        let address = movie
-            .asset
-            .url
-            .strip_prefix("http://")
-            .unwrap()
-            .split('/')
-            .next()
-            .unwrap();
-        let mut request = TcpStream::connect(address).unwrap();
-        write!(
-            request,
-            "GET /{} HTTP/1.1\r\nHost: {address}\r\nRange: bytes=0-15\r\n\r\n",
-            movie.asset.token
-        )
-        .unwrap();
-        let mut reply = vec![];
-        request.read_to_end(&mut reply).unwrap();
-        let split = reply.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
-        assert!(String::from_utf8_lossy(&reply[..split])
-            .contains(&format!("Content-Range: bytes 0-15/{size}")));
-        assert_eq!(&reply[split + 8..split + 12], b"ftyp");
+        let size = cached.size;
+        let (headers, body) = request(&movie.asset, "GET", "Range: bytes=0-15\r\n");
+        assert!(headers.contains(&format!("Content-Range: bytes 0-15/{size}")));
+        assert_eq!(&body[4..8], b"ftyp");
         let mut changes = package::Changes::default();
         let name = "ppt/media/phone.mp4".to_owned();
         changes
@@ -437,9 +584,7 @@ mod tests {
         let out = dir.path().join("movie.pptx");
         package::save(&out, None, changes).unwrap();
         let reopened = package::preview(&package::read(&out).unwrap()).unwrap();
-        let package::Media::Movie(ref embedded) = reopened.media[&name] else {
-            panic!("Expected a streamed movie");
-        };
+        let embedded = &reopened.media[&name];
         let mut a = open_file(&movie.asset.token).unwrap();
         let mut b = open_file(&embedded.token).unwrap();
         let mut second = vec![0; 1024 * 1024];

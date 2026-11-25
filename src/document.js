@@ -14,7 +14,7 @@ export async function pdfDocument(deck, assets) {
   const slides = deck.slides.filter((s) => !s.hidden);
   if (!slides.length) throw Error('Show at least one slide to export a PDF.');
   const sections = slides.map((slide) => {
-    const paper = scene(slide, deck, assets, false);
+    const paper = scene(slide, deck, assets, false, native);
     // Playback controls and external players do not have a printed representation.
     paper.querySelectorAll('iframe,button,input,video').forEach((n) => {
       if (n.tagName === 'VIDEO' && n.poster) {
@@ -40,8 +40,15 @@ export async function pdfDocument(deck, assets) {
       .scene{transform:scale(1.3333333333);transform-origin:0 0}
       *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
     }`;
+  // The detached PDF renderer can request the same disk-backed images as
+  // the canvas, one page at a time. Only native media tokens supply an origin.
+  const imageOrigins = new Set();
+  for (const asset of Object.values(assets)) {
+    if (asset?.token && /^http:\/\/127\.0\.0\.1:\d+\//.test(asset.url))
+      imageOrigins.add(new URL(asset.url).origin);
+  }
   const html =
-    '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data: blob:; style-src \'unsafe-inline\'; font-src data:;"><style>' +
+    `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob: ${[...imageOrigins].join(' ')}; style-src 'unsafe-inline'; font-src data:;"><style>` +
     css.replace(/<\/style/gi, '<\\/style') +
     '</style></head><body><main>' +
     sections.join('') +

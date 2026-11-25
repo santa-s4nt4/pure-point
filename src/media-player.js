@@ -1,6 +1,6 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { createElement, Play, Pause, Volume2, VolumeX, X } from 'lucide';
-import { onlineVideo } from './media-format.js';
+import { mediaURL, onlineVideo, setImageSource } from './media-format.js';
 import './media.css';
 
 const element = (tag, cls) => {
@@ -43,7 +43,7 @@ function slider(label, step, max) {
   s.value = '0';
   return s;
 }
-export function videoNode(o, assets, live = false) {
+export function videoNode(o, assets, live = false, deferImages = false) {
   const host = element('div', 'video-surface');
   host.dataset.videoId = o.id;
   const online = onlineVideo(o.embed);
@@ -51,7 +51,7 @@ export function videoNode(o, assets, live = false) {
     const p = element('img', 'video-cover');
     p.alt = '';
     p.draggable = false;
-    p.src = assets[o.poster];
+    setImageSource(p, assets[o.poster], deferImages);
     host.append(p);
   }
   if (!live) return host;
@@ -123,7 +123,7 @@ export function videoNode(o, assets, live = false) {
   const video = element('video', 'local-player');
   video.playsInline = true;
   video.preload = 'none';
-  if (o.poster) video.poster = assets[o.poster] || '';
+  if (o.poster) video.poster = mediaURL(assets[o.poster]);
   const seek = slider('Seek video', 0.01, 1),
     volume = slider('Volume', 0.01, 1),
     mute = control('Mute', Volume2);
@@ -135,7 +135,7 @@ export function videoNode(o, assets, live = false) {
   let ready = false;
   function load() {
     if (!ready) {
-      video.src = assets[o.asset]?.url || assets[o.asset];
+      video.src = mediaURL(assets[o.asset]);
       ready = true;
     }
   }

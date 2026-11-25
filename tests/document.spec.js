@@ -124,3 +124,75 @@ test('PDF uses the current slide contents and omits hidden slides and editor con
     interactive: 0,
   });
 });
+
+test('Disk-backed pictures and video posters reach the canvas, print pages and PPTX writer by reference', async ({
+  page,
+}) => {
+  await page.route('**/media-fixture', (route) =>
+    route.fulfill({ contentType: 'text/html', body: '<body></body>' })
+  );
+  await page.goto('/media-fixture');
+  const result = await page.evaluate(async () => {
+    window.isTauri = true;
+    const { scene } = await import('/src/view.js');
+    const { pdfDocument } = await import('/src/document.js');
+    const { exportDeck } = await import('/src/export.js');
+    const { blankDeck, shape } = await import('/src/model.js');
+    const deck = blankDeck();
+    const picture = 'ppt/media/picture.png',
+      movie = 'ppt/media/movie.mp4';
+    const origin = 'http://127.0.0.1:30475';
+    const assets = {
+      [picture]: {
+        token: 'picture',
+        mime: 'image/png',
+        url: origin + '/picture',
+      },
+      [movie]: { token: 'movie', mime: 'video/mp4', url: origin + '/movie' },
+    };
+    const slide = deck.slides[0];
+    slide.items.push(
+      shape('image', 'Image', 10, 20, 100, 100, { asset: picture }),
+      shape('video', 'Movie', 120, 20, 200, 100, {
+        asset: movie,
+        poster: picture,
+      })
+    );
+    const editing = scene(slide, deck, assets, true);
+    const preview = scene(slide, deck, assets);
+    const urls = (node) => [...node.querySelectorAll('img')].map((i) => i.src);
+    const { html } = await pdfDocument(deck, assets);
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const changes = exportDeck(deck, null, assets);
+    return {
+      canvas: urls(editing),
+      poster: editing.querySelector('video').poster,
+      preview: urls(preview),
+      print: [...doc.images].map((i) => [
+        i.hasAttribute('src'),
+        i.dataset.printSrc,
+      ]),
+      policy: doc.querySelector('[http-equiv]').content,
+      media: changes.media,
+      files: changes.videoFiles,
+    };
+  });
+  const imageURL = 'http://127.0.0.1:30475/picture';
+  expect(result).toMatchObject({
+    canvas: [imageURL, imageURL],
+    poster: imageURL,
+    preview: [imageURL, imageURL],
+    print: [
+      [false, imageURL],
+      [false, imageURL],
+    ],
+    media: {},
+    files: {
+      'ppt/media/picture.png': 'picture',
+      'ppt/media/movie.mp4': 'movie',
+    },
+  });
+  expect(result.policy).toContain(
+    'img-src data: blob: http://127.0.0.1:30475;'
+  );
+});

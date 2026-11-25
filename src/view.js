@@ -70,6 +70,7 @@ import {
   Ungroup,
 } from 'lucide';
 import { videoNode } from './media-player.js';
+import { setImageSource } from './media-format.js';
 import { tableNode } from './table.js';
 import { gridLines } from './grid.js';
 const icons = {
@@ -171,7 +172,7 @@ function typeStyle(n, o) {
     letterSpacing: (o.letterSpacing || 0) + 'px',
   });
 }
-export function itemNode(o, assets, interactive = false) {
+export function itemNode(o, assets, interactive = false, deferImages = false) {
   const n = el('div', 'item');
   if (interactive) n.dataset.id = o.id;
   if (o.kind === 'line') n.classList.add('is-line');
@@ -186,12 +187,12 @@ export function itemNode(o, assets, interactive = false) {
     transform: `rotate(${o.rotation}deg) scale(${o.flipH ? -1 : 1},${o.flipV ? -1 : 1})`,
   });
   if (o.kind === 'video') {
-    n.append(videoNode(o, assets, Boolean(interactive)));
+    n.append(videoNode(o, assets, Boolean(interactive), deferImages));
   } else if (o.kind === 'image') {
     const clip = el('div', 'image-clip'),
       img = el('img');
     img.draggable = false;
-    img.src = assets[o.asset] || '';
+    setImageSource(img, assets[o.asset], deferImages);
     const [l, t, r, b] = o.crop || [0, 0, 0, 0],
       w = 1 / Math.max(0.001, 1 - l - r),
       h = 1 / Math.max(0.001, 1 - t - b);
@@ -207,7 +208,9 @@ export function itemNode(o, assets, interactive = false) {
     const inner = el('div', 'group-content'),
       [x, y, w, h] = o.childBox;
     inner.style.transform = `scale(${o.w / w},${o.h / h}) translate(${-x}px,${-y}px)`;
-    o.items.forEach((c) => inner.append(itemNode(c, assets, interactive)));
+    o.items.forEach((c) =>
+      inner.append(itemNode(c, assets, interactive, deferImages))
+    );
     n.append(inner);
   } else if (o.kind === 'table') {
     n.append(tableNode(o, typeStyle, el));
@@ -287,15 +290,22 @@ export function itemNode(o, assets, interactive = false) {
   }
   return n;
 }
-export function scene(slide, deck, assets, interactive = false) {
+export function scene(
+  slide,
+  deck,
+  assets,
+  interactive = false,
+  deferImages = false
+) {
   const n = el('div', 'scene');
   Object.assign(n.style, {
     width: deck.w + 'px',
     height: deck.h + 'px',
     background: slide.bg,
   });
-  for (const o of slide.back) n.append(itemNode(o, assets));
-  for (const o of slide.items) n.append(itemNode(o, assets, interactive));
+  for (const o of slide.back) n.append(itemNode(o, assets, false, deferImages));
+  for (const o of slide.items)
+    n.append(itemNode(o, assets, interactive, deferImages));
   return n;
 }
 export function gridOverlay(deck, g) {
