@@ -90,3 +90,49 @@
   background: #f1f3f8;
   padding: 6px 8px;
 }
+
+.layer-row.drop-above {
+  box-shadow: inset 0 2px var(--blue);
+}
+.layer-row.drop-below {
+  box-shadow: inset 0 -2px var(--blue);
+}
+.object-alignment {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.object-alignment button {
+  width: 28px;
+  height: 26px;
+}
+.color-fields {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.color-fields label {
+  display: grid;
+  gap: 5px;
+  flex: 1;
+}
+.color-fields input[type='color'] {
+  width: 54px;
+  height: 36px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+.color-fields input[type='text'] {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.comment-target {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 5px;
+  overflow-wrap: anywhere;
+}

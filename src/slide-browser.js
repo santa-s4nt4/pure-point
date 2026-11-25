@@ -44,21 +44,39 @@ export function moveIntoSection(deck, ids, sectionId, beforeId = null) {
 }
 export function addSection(deck, name, ids) {
   const section = { id: uid(), name };
-  (deck.sections ??= []).push(section);
-  // Keep the section at the selection's location when creating the first section.
-  if (deck.sections.length === 1 && ids.size === deck.slides.length) {
-    deck.slides.forEach((s) => (s.sectionId = section.id));
-  } else {
-    const unassigned = deck.slides.filter(
-      (s) => !s.sectionId && !ids.has(s.id)
-    );
-    if (unassigned.length) {
-      const base = { id: uid(), name: 'Default section' };
-      deck.sections.unshift(base);
-      unassigned.forEach((s) => (s.sectionId = base.id));
+  const earlier = deck.sections || [];
+  const first = deck.slides.findIndex((s) => ids.has(s.id));
+  if (first < 0) return;
+  const chosen = deck.slides.filter((s) => ids.has(s.id));
+  const rest = deck.slides.filter((s) => !ids.has(s.id));
+  rest.splice(first, 0, ...chosen);
+  const unassigned = { id: uid(), name: 'Default section' };
+  const byId = new Map([...earlier, section, unassigned].map((s) => [s.id, s]));
+  const ordered = [],
+    seen = new Set();
+  let previous, run;
+  for (const slide of rest) {
+    const id = ids.has(slide.id)
+      ? section.id
+      : slide.sectionId || unassigned.id;
+    if (previous !== id) {
+      const original = byId.get(id);
+      run = seen.has(id) ? { id: uid(), name: original.name } : original;
+      seen.add(id);
+      ordered.push(run);
+      previous = id;
     }
-    moveIntoSection(deck, ids, section.id);
+    slide.sectionId = run.id;
   }
+  deck.sections = [
+    ...ordered,
+    ...earlier.filter(
+      (s) =>
+        !seen.has(s.id) &&
+        !deck.slides.some((slide) => slide.sectionId === s.id)
+    ),
+  ];
+  deck.slides = rest;
   return section;
 }
 export function slideBrowser(host, { sorter = false } = {}) {
