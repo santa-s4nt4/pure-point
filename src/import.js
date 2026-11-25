@@ -1,3 +1,4 @@
+import { readNotes } from './notes.js';
 import { readContours, readLineStyle } from './vector-xml.js';
 import { readDocumentMetadata } from './document-metadata.js';
 import { readLayerFlags } from './layer-xml.js';
@@ -482,6 +483,7 @@ export function importDeck(parts) {
       layoutPath = rel.find((r) => r.type === 'slideLayout')?.target;
     return {
       ...readSlidePage({ xml, media, doc, pres, page, rel, layoutPath }),
+      notes: readNotes(rel.find((r) => r.type === 'notesSlide')?.target, doc),
       source,
       relId: rid(id),
       slideId: attr(id, 'id'),

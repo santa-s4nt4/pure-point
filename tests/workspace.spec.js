@@ -32,7 +32,7 @@ test('Navigator, slide sections, hidden slides, and comments survive reopening',
   for (let i = 0; i < 4; i++) {
     await rail.locator('[data-action=addSlide]').click();
     await page
-      .getByRole('button', { name: 'タイトルのみ', exact: true })
+      .getByRole('button', { name: 'header title', exact: true })
       .click();
   }
   await rail.locator('[data-slide="1"]').click();
@@ -58,9 +58,9 @@ test('Navigator, slide sections, hidden slides, and comments survive reopening',
     .fill('Move this label slightly left.');
   await page.getByRole('button', { name: 'Post', exact: true }).click();
   await expect(page.locator('.comment-pin')).toHaveCount(1);
-  await page.locator('footer [data-action=inspector]').click();
+  await page.locator('header [data-action=inspector]').click();
   await expect(page.locator('.inspector')).toBeHidden();
-  await page.locator('footer [data-action=inspector]').click();
+  await page.locator('header [data-action=inspector]').click();
   await expect(page.locator('.inspector')).toBeVisible();
   await rail.locator('[data-action=overview]').click();
   await expect(page.locator('.sorter [data-slide]')).toHaveCount(5);

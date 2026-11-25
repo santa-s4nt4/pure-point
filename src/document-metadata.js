@@ -1,3 +1,4 @@
+import { writeNotes } from './notes.js';
 import { readCommentAnchor, writeCommentAnchor } from './comment-anchors.js';
 import { layerEntries } from './layers.js';
 import {
@@ -452,6 +453,12 @@ export function writeDocumentMetadata(
       if (slide.hidden) root.setAttribute('show', '0');
       else root.removeAttribute('show');
     }
+    writeNotes(
+      { xml, docs, part, pres, presPath, addRelation, ensureType },
+      slide,
+      old,
+      path
+    );
     writeReview(
       {
         xml,

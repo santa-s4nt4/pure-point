@@ -1,3 +1,4 @@
+import { bulletList } from './bullets.js';
 import { lineBox } from './text.js';
 import { vectorDrawing } from './vector-view.js';
 import {
@@ -13,6 +14,7 @@ import {
   Video,
   Link,
   PanelRight,
+  PanelBottom,
   FolderPlus,
   MessageSquare,
   LayoutGrid,
@@ -84,6 +86,7 @@ const icons = {
   video: Video,
   embed: Link,
   panel: PanelRight,
+  script: PanelBottom,
   section: FolderPlus,
   comment: MessageSquare,
   overview: LayoutGrid,
@@ -225,6 +228,7 @@ export function itemNode(o, assets, interactive = false) {
       textAlign: o.align,
       lineHeight: lineBox(o.lineHeight),
     });
+    if (o.placeholder && !o.text && interactive !== true) return n;
     if (interactive === true && o.placeholder && !o.text) {
       n.classList.add('empty-placeholder');
       text.dataset.prompt = ['title', 'ctrTitle'].includes(o.placeholder.type)
@@ -233,18 +237,20 @@ export function itemNode(o, assets, interactive = false) {
     }
     if (o.autoWidth) text.classList.add('point-text');
     if (o.paragraphs) {
-      for (const p of o.paragraphs) {
-        const line = el('div');
+      for (const [index, p] of o.paragraphs.entries()) {
+        const line = el(p.bullet ? 'li' : 'div');
+        line.dataset.paragraph = index;
         typeStyle(line, p.base);
         Object.assign(line.style, {
           textAlign: p.align,
           marginTop: (p.before || 0) + 'px',
           marginBottom: (p.after || 0) + 'px',
-          paddingLeft: (p.margin || 0) + 'px',
-          textIndent: (p.indent || 0) + 'px',
+          ...(!p.bullet && {
+            paddingLeft: (p.margin || 0) + 'px',
+            textIndent: (p.indent || 0) + 'px',
+          }),
           lineHeight: lineBox(p.lineHeight),
         });
-        if (p.bullet) line.dataset.bullet = p.bullet;
         for (const run of p.runs) {
           const chunks =
             run.eastAsianFont && run.eastAsianFont !== run.font
@@ -261,12 +267,21 @@ export function itemNode(o, assets, interactive = false) {
           });
         }
         if (!line.childNodes.length) line.append(el('br'));
-        text.append(line);
+        if (p.bullet) {
+          const list = bulletList(p, o.size);
+          list.append(line);
+          text.append(list);
+        } else text.append(line);
       }
     } else {
       const body = el('div');
       body.textContent = o.text;
       text.append(body);
+    }
+    if (text.dataset.prompt) {
+      const label =
+        text.querySelector('[data-paragraph]') || text.firstElementChild;
+      if (label) label.dataset.prompt = text.dataset.prompt;
     }
     n.append(text);
   }

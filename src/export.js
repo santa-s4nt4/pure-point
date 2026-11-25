@@ -264,9 +264,34 @@ function patchOriginal(n, o, old, reparented = false) {
       prior = old.paragraphs?.[paragraphIndex] || old;
     if (current && prior) {
       const ppr = () => ensure(p, A, 'a:pPr', p.firstElementChild);
-      if (current.margin !== prior.margin)
+      const newPlaceholderParagraph =
+        o.placeholder && current.runs && !old.paragraphs?.[paragraphIndex];
+      if (
+        newPlaceholderParagraph ||
+        (current.bullet || '') !== (prior.bullet || '')
+      ) {
+        const parent = ppr();
+        children(parent)
+          .filter((el) =>
+            ['buNone', 'buAutoNum', 'buChar', 'buBlip'].includes(el.localName)
+          )
+          .forEach((el) => el.remove());
+        const bullet = fragment(
+          doc,
+          current.bullet
+            ? `<a:buChar char="${esc(current.bullet)}"/>`
+            : '<a:buNone/>'
+        );
+        parent.insertBefore(
+          bullet,
+          children(parent).find((el) =>
+            ['tabLst', 'defRPr', 'extLst'].includes(el.localName)
+          ) || null
+        );
+      }
+      if (newPlaceholderParagraph || current.margin !== prior.margin)
         ppr().setAttribute('marL', emu(current.margin || 0));
-      if (current.indent !== prior.indent)
+      if (newPlaceholderParagraph || current.indent !== prior.indent)
         ppr().setAttribute('indent', emu(current.indent || 0));
       for (const [key, element] of [
         ['before', 'spcBef'],

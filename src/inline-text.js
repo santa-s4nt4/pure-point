@@ -1,3 +1,4 @@
+import { editableParagraphs, applyParagraphs, convertDash } from './bullets.js';
 import { singleLine } from './text.js';
 // Activate the actual rendered glyphs rather than painting an input over them.
 // Using the canvas DOM also preserves nested group transforms and native IME.
@@ -19,50 +20,29 @@ function caretAt(input, event) {
       }
     }
   }
-  if (!candidate) {
-    range.selectNodeContents(input.lastElementChild || input);
-    range.collapse(false);
+  const leaves = [...input.querySelectorAll('li,div,p')].filter(
+    (n) => !n.querySelector('div,p,li')
+  );
+  const empty = !range.startContainer.textContent || !candidate;
+  if (
+    empty ||
+    range.startContainer === input ||
+    range.startContainer.tagName === 'UL'
+  ) {
+    const distance = (n) => {
+      const r = n.getBoundingClientRect();
+      return Math.max(0, r.top - event.clientY, event.clientY - r.bottom);
+    };
+    const line =
+      (event
+        ? leaves.sort((a, b) => distance(a) - distance(b))[0]
+        : leaves.at(-1)) || input;
+    range.selectNodeContents(line);
+    if (!line.textContent) range.setStart(line, 0);
+    range.collapse(!line.textContent);
   } else range.collapse(true);
   selection.removeAllRanges();
   selection.addRange(range);
-}
-
-export function editableText(root) {
-  // Browsers use a trailing <br> to support a caret in an empty block; it
-  // isn't a second paragraph. Avoid innerText's layout-dependent flex breaks.
-  function contents(node) {
-    let text = '',
-      previousBlock = false,
-      started = false;
-    const children = [...node.childNodes];
-    for (const [i, child] of children.entries()) {
-      if (child.nodeType === Node.TEXT_NODE) {
-        if (previousBlock) text += '\n';
-        text += child.data;
-        previousBlock = false;
-        started = true;
-        continue;
-      }
-      if (child.nodeType !== Node.ELEMENT_NODE) continue;
-      if (child.tagName === 'BR') {
-        if (
-          i < children.length - 1 ||
-          (children.length === 1 && node === root && started)
-        )
-          text += '\n';
-        previousBlock = false;
-        started = true;
-        continue;
-      }
-      const block = ['DIV', 'P'].includes(child.tagName);
-      if (started && (previousBlock || block)) text += '\n';
-      text += contents(child);
-      started = true;
-      previousBlock = block;
-    }
-    return text;
-  }
-  return contents(root).replace(/\u00a0/g, ' ');
 }
 
 export function inlineText({ item, object, event, finish, onInput }) {
@@ -81,6 +61,16 @@ export function inlineText({ item, object, event, finish, onInput }) {
     deferBlur = false,
     touched = false,
     bookmark;
+  if (!object.paragraphs && object.text.includes('\n')) {
+    input.replaceChildren(
+      ...object.text.split('\n').map((value) => {
+        const p = document.createElement('div');
+        if (value) p.textContent = value;
+        else p.append(document.createElement('br'));
+        return p;
+      })
+    );
+  }
   if (!input.firstChild) input.append(document.createElement('div'));
   if (input.firstElementChild && !input.firstElementChild.childNodes.length)
     input.firstElementChild.append(document.createElement('br'));
@@ -96,6 +86,13 @@ export function inlineText({ item, object, event, finish, onInput }) {
     item.style.height =
       Math.max(object.size * singleLine, input.offsetHeight) + 'px';
   }
+  input.addEventListener(
+    'beforeinput',
+    (e) => {
+      if (!composing) convertDash(e, input, object);
+    },
+    options
+  );
   input.addEventListener(
     'compositionstart',
     () => {
@@ -175,7 +172,23 @@ export function inlineText({ item, object, event, finish, onInput }) {
   return {
     o: object,
     input,
-    read: () => (touched ? editableText(input) : object.text),
+    read: () =>
+      touched
+        ? editableParagraphs(input, object)
+            .map((p) => p.text)
+            .join('\n')
+        : object.text,
+    changed() {
+      if (!touched) return false;
+      const rows = editableParagraphs(input, object);
+      return (
+        rows.map((p) => p.text).join('\n') !== object.text ||
+        rows.some((p, i) => p.bullet !== (object.paragraphs?.[i]?.bullet || ''))
+      );
+    },
+    apply() {
+      if (touched) applyParagraphs(object, editableParagraphs(input, object));
+    },
     remember() {
       const sel = document.getSelection();
       if (!sel.rangeCount || !input.contains(sel.anchorNode)) return bookmark;

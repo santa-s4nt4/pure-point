@@ -14,23 +14,29 @@ export function workspace(action) {
     ['video', 'Insert video…'],
     ['embed', 'Embed YouTube or Vimeo…'],
   ];
-  return `<main class="work">
-    <aside class="rail" aria-label="Slide navigator">
-      <div class="document-bar" data-tauri-drag-region>
-        <button class="p-menu" data-action="fileMenu" aria-label="Document menu" aria-haspopup="menu" title="Document menu"><canvas id="floating-p" width="150" height="150"></canvas>${icon('down', 11)}</button>
-        <div class="document-name" data-tauri-drag-region><span class="doc-name" data-tauri-drag-region>untitled.pptx</span></div>
-      </div>
+  return `<header class="document-bar" data-tauri-drag-region="deep">
+    <div class="document-tools">
+      <button class="p-menu" data-action="fileMenu" aria-label="Document menu" aria-haspopup="menu" title="Document menu"><canvas id="floating-p" width="150" height="150"></canvas>${icon('down', 11)}</button>
+    </div>
+    <div class="document-name"><span class="doc-name">untitled.pptx</span><span id="status" role="status"></span></div>
+    <div class="panel-toggles" role="group" aria-label="Workspace panels">${action('navigator', 'Toggle slide navigator', 'sidebar')}${action('script', 'Toggle script', 'script')}${action('inspector', 'Toggle inspector', 'panel')}</div>
+  </header>
+  <main class="work">
+    <aside id="slide-navigator" class="rail" aria-label="Slide navigator">
       <div class="section-heading rail-head"><span class="head-title">Slides <span class="head-count"></span></span><div class="rail-actions">${action('overview', 'Slide overview', 'overview')}${action('addSlide', 'Add slide', 'plus')}</div></div>
       <div class="thumbs"></div>
       <div class="rail-foot">${action('newSection', 'New section', 'section', 'row-button', true)}</div>
     </aside>
     <div class="rail-resizer" role="separator" tabindex="0" aria-label="Resize slide navigator" aria-orientation="vertical" aria-valuemin="140" aria-valuemax="460"></div>
-    <section class="stage" aria-label="Slide canvas"><div class="ruler-corner"></div><canvas class="ruler-top"></canvas><canvas class="ruler-left"></canvas><div class="viewport"><div class="world"><div class="paper-frame"><div class="page-label"></div><div class="artboard"></div></div></div></div>
+    <div class="stage-column"><section class="stage" aria-label="Slide canvas"><div class="ruler-corner"></div><canvas class="ruler-top"></canvas><canvas class="ruler-left"></canvas><div class="viewport"><div class="world"><div class="paper-frame"><div class="page-label"></div><div class="artboard"></div></div></div></div>
       <div class="floating-tools" role="toolbar" aria-label="Canvas tools">${tools.map(([id, label]) => action('tool-' + id, label, id, 'tool')).join('')}<i class="divider"></i>${action('gridVisible', 'Layout grid (G)', 'grid', 'tool')}</div>
       <div class="sorter" aria-label="Slide overview" hidden></div>
-    </section>
-    <aside class="inspector" aria-label="Inspector"><div class="inspect-tabs"><button class="tab active" data-action="design">Design</button><button class="tab" data-action="slides">Slides</button><button class="tab" data-action="layers">Layers</button><button class="tab" data-action="comments">Comments</button></div><div id="properties"></div></aside>
-  </main><footer class="footer"><div class="foot-left"><i class="status-dot"></i><span id="status"></span></div><div class="foot-right"><span id="slide-counter"></span><i class="divider"></i>${action('canvasView', 'Slide view', 'slide')}${action('overview', 'Slide overview', 'overview')}${action('inspector', 'Toggle inspector', 'panel')}<i class="divider"></i>${action('zoomOut', 'Zoom out', 'minus')}<select id="zoom" aria-label="Zoom"><option value="fit">Fit</option><option value="custom" hidden></option>${zoomStops.map((v) => `<option value="${v}">${Math.round(v * 100)}%</option>`).join('')}</select>${action('zoomIn', 'Zoom in', 'plus')}${action('fit', 'Zoom to fit', 'fit')}</div></footer>`;
+    </section><section id="script-panel" class="script-panel" aria-label="Speaker notes" hidden>
+      <label for="slide-script">Script</label>
+      <textarea id="slide-script" aria-label="Slide script" placeholder="Add speaker notes…"></textarea>
+    </section></div>
+    <aside id="slide-inspector" class="inspector" aria-label="Inspector"><div class="inspect-tabs"><button class="tab active" data-action="design">Design</button><button class="tab" data-action="slides">Slides</button><button class="tab" data-action="layers">Layers</button><button class="tab" data-action="comments">Comments</button></div><div id="properties"></div></aside>
+  </main><footer class="footer"><div class="foot-left"><span id="slide-counter"></span></div><div class="foot-right">${action('canvasView', 'Slide view', 'slide')}${action('overview', 'Slide overview', 'overview')}<i class="divider"></i>${action('zoomOut', 'Zoom out', 'minus')}<select id="zoom" aria-label="Zoom"><option value="fit">Fit</option><option value="custom" hidden></option>${zoomStops.map((v) => `<option value="${v}">${Math.round(v * 100)}%</option>`).join('')}</select>${action('zoomIn', 'Zoom in', 'plus')}${action('fit', 'Zoom to fit', 'fit')}</div></footer>`;
 }
 
 export function animateLogo(canvas) {

@@ -55,7 +55,7 @@ import {
   ungroup,
 } from './layers.js';
 import { layerPanel, toggleExpanded } from './layer-panel.js';
-import { updateText, singleLine } from './text.js';
+import { singleLine } from './text.js';
 import { layoutOptions } from './slide-layouts.js';
 import { chooseLayout } from './layout-picker.js';
 import { inlineText } from './inline-text.js';
@@ -109,6 +109,11 @@ document.body.classList.toggle('native', platform.native);
 root.innerHTML = workspace(action);
 const designUnit = 2;
 const commentDrafts = new Map();
+const scriptField = $('#slide-script');
+let scriptOpen = false,
+  savingDocument = false,
+  noteRevision = null,
+  navigatorOpen = localStorage.getItem('pure-point.navigator') !== 'closed';
 let overview = false,
   inspectorOpen = localStorage.getItem('pure-point.inspector') !== 'closed';
 let tileWidth = 216,
@@ -124,6 +129,31 @@ const railSlides = slideBrowser($('.thumbs')),
   overviewSlides = slideBrowser($('.sorter'), { sorter: true });
 animateLogo($('#floating-p'));
 bindRailResize($('.rail-resizer'));
+for (const [action, panel] of [
+  ['navigator', 'slide-navigator'],
+  ['script', 'script-panel'],
+  ['inspector', 'slide-inspector'],
+]) {
+  document
+    .querySelector(`.panel-toggles [data-action="${action}"]`)
+    .setAttribute('aria-controls', panel);
+}
+scriptField.addEventListener('input', () => {
+  const slide = active();
+  if (scriptField.readOnly || scriptField.value === (slide.notes || '')) return;
+  // A continuous edit has one document undo entry. A save starts a new entry
+  // even if the insertion point remains in the same speaker-notes field.
+  const before =
+    noteRevision !== currentRevision || currentRevision === savedRevision
+      ? snapshot()
+      : null;
+  slide.notes = scriptField.value;
+  if (before) record(before);
+  noteRevision = currentRevision;
+});
+scriptField.addEventListener('blur', () => {
+  noteRevision = null;
+});
 function slideIds() {
   return pickedSlides.size && pickedSlides.has(active().id)
     ? pickedSlides
@@ -137,6 +167,10 @@ function dimension(key) {
 function updateChrome() {
   root.classList.toggle('overview-mode', overview);
   root.classList.toggle('inspector-closed', !inspectorOpen || overview);
+  root.classList.toggle('navigator-closed', !navigatorOpen);
+  $('#script-panel').hidden = !scriptOpen;
+  $('[data-action="navigator"]').setAttribute('aria-pressed', navigatorOpen);
+  $('[data-action="script"]').setAttribute('aria-pressed', scriptOpen);
   $('.sorter').hidden = !overview;
   for (const b of document.querySelectorAll('[data-action="overview"]'))
     b.setAttribute('aria-pressed', overview);
@@ -249,15 +283,20 @@ function restore(from, to) {
   render();
 }
 function status() {
-  const dirty =
-    currentRevision !== savedRevision ||
-    Boolean(editor && editor.read() !== editor.o.text);
+  const dirty = currentRevision !== savedRevision || Boolean(editor?.changed());
   if (dirty !== lastDirty) {
     lastDirty = dirty;
     platform.dirtyFlag(dirty);
   }
   $('.doc-name').textContent = fileTitle() + '.pptx';
-  $('.doc-name').title = $('.doc-name').textContent;
+  $('.doc-name').title = path || $('.doc-name').textContent;
+  if (scriptField.dataset.slideId !== active().id) {
+    noteRevision = null;
+    scriptField.dataset.slideId = active().id;
+  }
+  if (scriptField.value !== (active().notes || ''))
+    scriptField.value = active().notes || '';
+  scriptField.readOnly = busy && !savingDocument;
   $('#status').textContent = busy
     ? 'Working…'
     : dirty
@@ -992,8 +1031,8 @@ function updateObject(key, value) {
   if (editing) {
     const text = editing.read();
     editor = null;
+    if (editing.changed()) editing.apply();
     editing.close();
-    if (text !== o.text) updateText(o, text);
     if (o.kind === 'text' && !o.placeholder)
       o.name = text.slice(0, 40) || 'Text';
   }
@@ -1173,20 +1212,21 @@ function finishText(cancel = false, deselect = false, passive = false) {
   const activeEditor = editor,
     { o, creation } = activeEditor;
   const value = activeEditor.read(),
+    textChanged = activeEditor.changed(),
     measured = activeEditor.size();
   editor = null;
-  activeEditor.close();
   const before = creation?.before || snapshot();
   if (creation && (cancel || !value.trim())) {
     active().items = active().items.filter((item) => item !== o);
     setSelection(creation.selected);
-  } else if (!cancel && (creation || o.text !== value)) {
-    updateText(o, value);
+  } else if (!cancel && (creation || textChanged)) {
+    activeEditor.apply();
     if (o.autoWidth) Object.assign(o, measured);
     if (o.kind === 'text' && !o.placeholder)
       o.name = value.slice(0, 40) || 'Text';
     record(before);
   }
+  activeEditor.close();
   if (deselect) setSelection([]);
   if (passive) {
     renderBoard();
@@ -1272,6 +1312,8 @@ function menu(anchor, rows, point) {
 }
 async function save(as) {
   finishText();
+  const revision = currentRevision;
+  noteRevision = null;
   const changes = exportDeck(deck, base, assets);
   const output = await platform.savePackage(
     base,
@@ -1281,7 +1323,7 @@ async function save(as) {
   );
   if (!output) return false;
   path = output;
-  savedRevision = currentRevision;
+  savedRevision = revision;
   status();
   toast('Presentation saved.');
   return true;
@@ -1760,6 +1802,21 @@ async function execute(id, button) {
     setOverview(id === 'overview' ? !overview : false);
     return;
   }
+  if (id === 'navigator') {
+    navigatorOpen = !navigatorOpen;
+    localStorage.setItem(
+      'pure-point.navigator',
+      navigatorOpen ? 'open' : 'closed'
+    );
+    updateChrome();
+    return;
+  }
+  if (id === 'script') {
+    scriptOpen = !scriptOpen;
+    updateChrome();
+    if (scriptOpen) scriptField.focus();
+    return;
+  }
   if (id === 'inspector') {
     if (overview) {
       setOverview(false);
@@ -1841,6 +1898,7 @@ async function execute(id, button) {
     ].includes(id)
   ) {
     busy = true;
+    savingDocument = id === 'save' || id === 'saveAs';
     status();
     try {
       if (id === 'save' || id === 'saveAs') await save(id === 'saveAs');
@@ -1853,6 +1911,7 @@ async function execute(id, button) {
       if (id === 'tool-video') await mediaEditor.insertVideo();
       if (id === 'tool-embed') await mediaEditor.insertEmbed();
     } finally {
+      savingDocument = false;
       busy = false;
       status();
       if (ready && incomingQueued) {
