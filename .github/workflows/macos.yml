@@ -47,9 +47,15 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
           name: pure-point-macOS
@@ -58,9 +64,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" release/pure-point-macOS.zip --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" release/pure-point-macOS.zip --verify-tag --title "pure-point $GITHUB_REF_NAME" --generate-notes
-          fi
+        run: bash scripts/publish-release.sh "$GITHUB_REF_NAME" release/pure-point-macOS.zip
