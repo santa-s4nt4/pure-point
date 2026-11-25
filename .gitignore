@@ -6,3 +6,5 @@ test-results/
 playwright-report/
 .DS_Store
 /pure-point.app/
+
+/release/

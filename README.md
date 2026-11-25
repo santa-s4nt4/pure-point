@@ -4,24 +4,27 @@ A macOS slide editor built with Rust, Tauri, and WebKit. Open `pure-point.app` t
 
 ## Documents
 
-On this Mac, New and startup read `~/Library/CloudStorage/OneDrive-電通/zero/template.potx`. The editor opens a fresh **untitled.pptx** based on that template. The first Save asks for a name and location. The template stays in OneDrive. A widescreen template uses a 1920 × 1080 design canvas, with editable position and dimensions in pixels. Font sizes are in PowerPoint points. Opening an existing presentation retains its page dimensions.
+On this Mac, New and startup read `~/Library/CloudStorage/OneDrive-電通/zero/template.potx`. The editor opens a fresh **untitled.pptx** based on that template. The first Save asks for a name and location. If that file is absent, the app starts with a blank presentation. The template stays in OneDrive. A widescreen template uses a 1920 × 1080 design canvas, with editable position and dimensions in pixels. Font sizes are in PowerPoint points. Opening an existing presentation retains its page dimensions.
 
 ## Slides and layout
 
 - Switch between the canvas and the slide overview with the controls at the bottom, or the grid button above the thumbnails. Double-click a slide in the overview to edit it. Pinch either view to zoom. The canvas supports up to 1600%, with two-finger scrolling to pan.
 - Drag the divider on the right edge of the navigator to resize the thumbnails. The panel button in the status bar shows or hides the inspector.
-- With the slide selected, use ↑ and ↓ to move through the deck. Select a layer to nudge it with the arrow keys.
-- Shift-click a range of slides, or ⌘-click individual slides. **New section** groups that selection. Right-click a thumbnail to move slides into a section, hide them, or delete them. Drag thumbnails to reorder them or drop them on a section. Click a section name to collapse it.
+- Use **Add slide** in the navigator or the right-hand **Slides** tab to preview **タイトルのみ**, **1_タイトル スライド**, and **タイトルとコンテンツ**. When the presentation contains these layouts, their editable placeholders and master styles carry into the new slide.
+- With a slide selected, ↑ and ↓ navigate and Delete removes the selected slides. Select a layer to nudge it with the arrow keys.
+- Shift-click a range of slides, or ⌘-click individual slides. **⌘G** groups the selected slides in a named section. Right-click a thumbnail to move slides into a section, hide them, or delete them. Drag thumbnails to reorder them or drop them on a section. Click a section name to collapse it.
 - Hidden slides remain accessible in both editing views and are skipped in presentations and PDF exports.
 - Choose a column, row, square, or thirds grid in Design. Set margins, gutters, and spacing. Hold Option while moving objects to temporarily bypass snapping.
 
 ## Objects and review
 
-- Double-click an empty spot to start writing, or double-click existing text to edit it. Select text to choose from the fonts and typefaces installed on this Mac.
-- Shift-click objects or drag an empty area to select multiple objects. The Layers tab supports multiple selection, nested groups, visibility, and locking. Expand a group to work with its members.
-- Comments belong to a slide and are saved inside the PPTX. Post from the Comments tab, or use its pin button and click the canvas to choose a location.
+- Double-click a blank spot for a new Yu Gothic 24 pt text box. Double-click existing text to place the caret at the pointer. Click the canvas to finish. The Design tab sets character spacing in points and line spacing in PowerPoint units.
+- Drag with the rectangle, ellipse, or line tool to set the size. Double-click a shape to edit its path. Drag a vertex or Bézier handle, double-click a segment to add a vertex, and press Escape to finish. Lines support solid and dashed strokes and arrowheads on either end.
+- Image and video corner handles preserve the aspect ratio. In Design, align a single object or group to the slide, or align multiple objects to their shared bounds. Choose a color and click **Apply** to commit it.
+- Shift-click objects or drag an empty area to select multiple objects. The Layers tab supports multiple selection, nested groups, visibility, and locking. Drag layer rows to change their stacking order. Expand a group to work with its members.
+- Select an object and post from Comments, or right-click it and choose **Add comment**. The comment follows the object and is saved as a PowerPoint comment. You can also pin comments to a position on the slide.
 - Insert an image with the image tool. Double-click an existing image to replace it in its frame.
-- Insert a local movie with the video tool. Hover over it or focus it to play, seek, mute, and adjust volume. Drop another video onto its frame to replace it. For YouTube or Vimeo, use the link tool and paste a video URL. Online players require a connection and a video that permits embedding.
+- Insert a local movie with the video tool. On macOS, AVFoundation prepares compatible MP4 media for PowerPoint. H.264/AAC MOV files can retain their original compressed video and audio. Hover over a movie or focus it to play, seek, mute, and adjust volume. Drop another video onto its frame to replace it. For YouTube or Vimeo, use the link tool and paste a video URL. Online players require a connection and a video that permits embedding.
 
 | Action | Mac shortcut |
 | --- | --- |
@@ -31,7 +34,7 @@ On this Mac, New and startup read `~/Library/CloudStorage/OneDrive-電通/zero/t
 | Undo / Redo | ⌘Z / ⇧⌘Z |
 | Group / Ungroup | ⌘G / ⇧⌘G |
 | Toggle layer visibility / lock | ⇧⌘H / ⇧⌘L |
-| Select / Text / Rectangle / Ellipse | V / T / R / O |
+| Select / Text / Rectangle / Ellipse / Line | V / T / R / O / L |
 | Show layout grid | G |
 | Nudge a selection | Arrow / Shift + arrow |
 | Finish text editing | ⌘Enter |
@@ -39,7 +42,7 @@ On this Mac, New and startup read `~/Library/CloudStorage/OneDrive-電通/zero/t
 
 ## File compatibility
 
-Text, shapes, groups, review comments, sections, and hidden-slide state are stored in the PowerPoint package. Editing an imported deck preserves its original parts wherever possible. The editor approximates some imported features, including charts, SmartArt, effects, and animations. PDF uses the editor’s visible slide content; video appears as a still. For matching typography on another computer, install the same fonts there. Video playback depends on the system decoder or the video provider.
+Text, shapes, groups, review comments, sections, and hidden-slide state are stored in the PowerPoint package. Editing an imported deck preserves its original parts wherever possible. The editor approximates some imported features, including charts, SmartArt, effects, and animations. PDF uses the editor’s visible slide content. Video appears as a still. For matching typography on another computer, install the same fonts there. Video playback depends on the system decoder or the video provider.
 
 ## Development
 
@@ -57,4 +60,17 @@ npm test
 cargo test --manifest-path src-tauri/Cargo.toml --release
 ```
 
-The UI tests use the installed Google Chrome. The browser development surface starts with an empty slide. The desktop app reads the local OneDrive template.
+The UI tests use the installed Google Chrome. The browser development surface starts with an empty slide. The desktop app uses the local OneDrive template when available.
+
+## macOS releases
+
+Pushing a version tag such as `v0.3.0` runs the editor and Rust tests, builds an Apple Silicon and Intel universal app, and publishes `pure-point-macOS.zip` to GitHub Releases. The workflow can also be run manually from Actions to download a build artifact. Release bundles use an ad-hoc signature.
+
+After a release is published, run the following on a Mac to download it and unpack the app on the Desktop.
+
+```sh
+archive=$(mktemp -t pure-point) &&
+  curl -fL https://github.com/santa-s4nt4/pure-point/releases/latest/download/pure-point-macOS.zip -o "$archive" &&
+  ditto -x -k "$archive" "$HOME/Desktop" &&
+  rm "$archive"
+```
