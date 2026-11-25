@@ -1,54 +1,60 @@
 # pure-point
 
-グリッドでレイアウトを組むためのmacOS用PPTXエディタです。RustとTauriを使い、フォントはmacOSのCore Textから取得します。
+A macOS slide editor built with Rust, Tauri, and WebKit. Open `pure-point.app` to start. Click the animated **P** above the slide navigator for New, Open, Save, Save As, Export PDF, Present, Undo, and Redo.
 
-## 起動
+## Documents
 
-このフォルダの `pure-point.app` をダブルクリックしてください。初回の画面には編集できる3枚のサンプルが入っています。空のプレゼンテーションは「ファイル」メニューの「新規作成」で開始できます。
+On this Mac, New and startup read `~/Library/CloudStorage/OneDrive-電通/zero/template.potx`. The editor opens a fresh **untitled.pptx** based on that template. The first Save asks for a name and location. The template stays in OneDrive. A widescreen template uses a 1920 × 1080 design canvas, with editable position and dimensions in pixels. Font sizes are in PowerPoint points. Opening an existing presentation retains its page dimensions.
 
-## スライドを編集する
+## Slides and layout
 
-- 左下の「PPTX を開く」から既存の資料を開けます。Finderの「このアプリケーションで開く」にも対応しています。
-- 下のツールバーでテキスト、四角形、楕円を選び、スライド上をクリックして配置します。画像ボタンでPNG・JPEGを挿入できます。
-- オブジェクトはドラッグで移動、四隅のハンドルでサイズ変更できます。右パネルでは数値をpt単位で指定できます。テキストの編集はダブルクリックです。
-- フォントと書体は、テキストを選択して右パネルから変更できます。
-- 右の「レイアウトグリッド」でカラム、行、方眼、三分割を選べます。カラムと行では分割数、余白、ガターを、方眼では間隔を設定できます。表示とスナップは個別に切り替えられます。
-- スナップを有効にすると、移動中にオブジェクトの端や中央がグリッド、スライドの端や中央、他のオブジェクトに吸着します。ピンクの線が吸着位置です。Optionを押しながら動かすと一時的に自由配置になります。
-- 左上の「＋」でスライドを追加できます。サムネイルを右クリックすると名前の変更、並べ替え、削除ができます。
-- 「発表」で全画面表示に入り、左右キーで移動、Escで編集に戻ります。
+- Switch between the canvas and the slide overview with the controls at the bottom, or the grid button above the thumbnails. Double-click a slide in the overview to edit it. Pinch either view to zoom. The canvas supports up to 1600%, with two-finger scrolling to pan.
+- Drag the divider on the right edge of the navigator to resize the thumbnails. The panel button in the status bar shows or hides the inspector.
+- With the slide selected, use ↑ and ↓ to move through the deck. Select a layer to nudge it with the arrow keys.
+- Shift-click a range of slides, or ⌘-click individual slides. **New section** groups that selection. Right-click a thumbnail to move slides into a section, hide them, or delete them. Drag thumbnails to reorder them or drop them on a section. Click a section name to collapse it.
+- Hidden slides remain accessible in both editing views and are skipped in presentations and PDF exports.
+- Choose a column, row, square, or thirds grid in Design. Set margins, gutters, and spacing. Hold Option while moving objects to temporarily bypass snapping.
 
-| 操作 | ショートカット |
+## Objects and review
+
+- Double-click an empty spot to start writing, or double-click existing text to edit it. Select text to choose from the fonts and typefaces installed on this Mac.
+- Shift-click objects or drag an empty area to select multiple objects. The Layers tab supports multiple selection, nested groups, visibility, and locking. Expand a group to work with its members.
+- Comments belong to a slide and are saved inside the PPTX. Post from the Comments tab, or use its pin button and click the canvas to choose a location.
+- Insert an image with the image tool. Double-click an existing image to replace it in its frame.
+- Insert a local movie with the video tool. Hover over it or focus it to play, seek, mute, and adjust volume. Drop another video onto its frame to replace it. For YouTube or Vimeo, use the link tool and paste a video URL. Online players require a connection and a video that permits embedding.
+
+| Action | Mac shortcut |
 | --- | --- |
-| 新規作成 / 開く | ⌘N / ⌘O |
-| 保存 / 別名で保存 | ⌘S / ⇧⌘S |
-| 取り消す / やり直す | ⌘Z / ⇧⌘Z |
-| 選択 / テキスト / 四角形 / 楕円 | V / T / R / O |
-| グリッド表示の切り替え | G |
-| 選択したオブジェクトを1 pt / 10 pt移動 | 矢印 / Shift＋矢印 |
-| テキストを編集 / 確定 | Enter / ⌘Enter |
+| New / Open | ⌘N / ⌘O |
+| Save / Save As | ⌘S / ⇧⌘S |
+| Export PDF | ⇧⌘E |
+| Undo / Redo | ⌘Z / ⇧⌘Z |
+| Group / Ungroup | ⌘G / ⇧⌘G |
+| Toggle layer visibility / lock | ⇧⌘H / ⇧⌘L |
+| Select / Text / Rectangle / Ellipse | V / T / R / O |
+| Show layout grid | G |
+| Nudge a selection | Arrow / Shift + arrow |
+| Finish text editing | ⌘Enter |
+| End presentation | Esc |
 
-## PowerPointとの互換性
+## File compatibility
 
-「PPTX 書き出し」で保存先を選びます。新規テキスト・図形はPowerPointの編集可能なオブジェクト、画像は埋め込み画像として書き出します。座標と大きさにはDrawingMLのEMU単位を使います。グリッドや整列ガイドは編集画面内だけに表示されます。
+Text, shapes, groups, review comments, sections, and hidden-slide state are stored in the PowerPoint package. Editing an imported deck preserves its original parts wherever possible. The editor approximates some imported features, including charts, SmartArt, effects, and animations. PDF uses the editor’s visible slide content; video appears as a still. For matching typography on another computer, install the same fonts there. Video playback depends on the system decoder or the video provider.
 
-既存PPTXの保存では、元のパッケージと変更箇所を照合します。図形を移動した場合は元の図形に座標を反映します。マスター、テーマ、埋め込みグラフ、ノートなどの未変更の部品は保持します。無編集でのデスクトップ版の保存では元ファイルのバイト列を使います。
+## Development
 
-複雑なグラフ、SmartArt、特殊な図形、効果、アニメーションは編集画面での再現に制限があります。グラフなどは枠による簡易表示、表はセル内容のプレビューになります。PowerPointでの再生には元の部品が使われます。フォントは書体名を記録するため、別のコンピュータで同じ文字組みを再現するには、同じフォントが必要です。
-
-## 開発
-
-macOS、Xcode Command Line Tools、Rust、Node.jsが必要です。
+Install Rust, Node.js, and Xcode Command Line Tools on macOS. To run the desktop app:
 
 ```sh
 npm ci
 npm run dev
 ```
 
-`npm run build` でこのフォルダにローカル署名した `pure-point.app` が生成されます。UIとPPTX変換は `src/`、ネイティブの入出力、ZIPパッケージ処理、フォント取得は `src-tauri/src/` にあります。
+`npm run build` produces a locally signed `pure-point.app` in the project directory. The supplied icon artwork lives in `public/floating-P.png`, which Vite copies into `dist/` on every build.
 
 ```sh
 npm test
 cargo test --manifest-path src-tauri/Cargo.toml --release
 ```
 
-UIテストはインストール済みのGoogle Chromeを使います。
+The UI tests use the installed Google Chrome. The browser development surface starts with an empty slide. The desktop app reads the local OneDrive template.

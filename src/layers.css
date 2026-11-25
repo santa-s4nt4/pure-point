@@ -1,0 +1,92 @@
+.layer-panel {
+  padding: 12px 6px;
+}
+.layer-panel > .section-heading {
+  padding: 0 6px 8px;
+}
+.layer-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+.layer-row {
+  display: flex;
+  align-items: center;
+  padding-left: calc(var(--depth) * 10px);
+  border-radius: 4px;
+  min-height: 30px;
+}
+.layer-row:hover {
+  background: #f4f5f7;
+}
+.layer-row.active {
+  background: #e9edff;
+  color: var(--blue);
+}
+.layer-row .layer {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  padding: 6px 3px;
+  justify-content: flex-start;
+  gap: 6px;
+}
+.layer-row .layer:hover {
+  background: transparent;
+}
+.layer-disclosure,
+.layer-toggle {
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: 3px;
+  padding: 0;
+}
+.layer-disclosure {
+  width: 15px;
+  height: 22px;
+}
+.layer-toggle {
+  width: 19px;
+  height: 23px;
+  opacity: 0.46;
+}
+.layer-toggle.set,
+.layer-row:hover .layer-toggle,
+.layer-toggle:focus-visible {
+  opacity: 1;
+}
+.layer-toggle:hover,
+.layer-disclosure:is(button):hover {
+  background: #9298a422;
+}
+.invisible-layer .layer {
+  opacity: 0.52;
+}
+.artboard .item.locked-layer,
+.artboard .item.locked-layer * {
+  pointer-events: none !important;
+}
+.artboard .selection-outline {
+  position: absolute;
+  transform-origin: 0 0;
+  border: var(--hair) solid #405bed77;
+}
+.artboard .marquee {
+  position: absolute;
+  border: var(--hair) solid var(--blue);
+  background: #526bff18;
+  pointer-events: none;
+}
+.layer-set {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 9px;
+}
+.layer-set button {
+  font-size: 11px;
+  border-radius: 4px;
+  background: #f1f3f8;
+  padding: 6px 8px;
+}

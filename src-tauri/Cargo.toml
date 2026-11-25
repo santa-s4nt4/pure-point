@@ -1,0 +1,18 @@
+[package]
+name = "pure-point"
+version = "0.2.0"
+edition = "2021"
+
+[build-dependencies]
+cc = "1"
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+getrandom = "0.4"
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+base64 = "0.22"
+rfd = "0.17"
+zip = { version = "4", default-features = false, features = ["deflate"] }
+tempfile = "3"
+core-text = "22"

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "pure-point",
+  "version": "0.2.0",
+  "identifier": "studio.puretools.pure-point",
+  "build": {
+    "beforeDevCommand": "npm run dev:web",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build:web",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "pure-point",
+        "width": 1440,
+        "height": 890,
+        "minWidth": 900,
+        "minHeight": 580,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; frame-src http://127.0.0.1:* https://www.youtube.com https://player.vimeo.com; style-src 'self' 'unsafe-inline'; font-src 'self' data: blob:; connect-src ipc: http://ipc.localhost 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "icon": ["icons/icon.icns", "icons/icon.png"],
+    "category": "Productivity",
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    },
+    "fileAssociations": [
+      {
+        "ext": ["pptx"],
+        "name": "PowerPoint Presentation",
+        "role": "Editor",
+        "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "rank": "Alternate"
+      }
+    ]
+  }
+}
