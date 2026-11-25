@@ -795,17 +795,29 @@ h3 {
 .guide-line {
   background: #d62e87;
 }
-.text-edit {
-  position: absolute;
-  resize: none;
-  z-index: 3;
-  margin: 0;
-  border: var(--hair) solid var(--blue);
-  outline: none;
-  background: white;
-  color: inherit;
-  line-height: 1.16;
-  overflow: auto;
+.item-text [data-bullet]::before {
+  content: attr(data-bullet) ' ';
+}
+.item-text.point-text {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.artboard .item.editing-text,
+.artboard .item.editing-text .text-edit {
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+  touch-action: auto;
+}
+.item-text.text-edit {
+  pointer-events: auto;
+  outline: 0;
+  background: transparent;
+  border: 0;
+  caret-color: currentColor;
+}
+.artboard:has(.text-edit) .selection {
+  display: none;
 }
 .menu {
   position: fixed;
@@ -953,4 +965,71 @@ h3 {
   white-space: pre-wrap;
   line-height: 1.16;
   box-shadow: inset 0 0 0 0.5px #9ba0a6;
+}
+.item.empty-placeholder:not(.editing-text) {
+  outline: 1px dashed #8a8c957a;
+  outline-offset: -1px;
+}
+.item.empty-placeholder:not(.editing-text) > .item-text::before {
+  content: attr(data-prompt);
+  opacity: 0.47;
+}
+.item.empty-placeholder:not(.editing-text) > .item-text > div {
+  display: none;
+}
+.layout-picker {
+  width: min(710px, 94vw);
+  max-width: none;
+  color: var(--ink, #222);
+  border: 1px solid #d9dadd;
+  border-radius: 12px;
+  padding: 20px;
+  background: #fff;
+  box-shadow: 0 8px 42px #0003;
+}
+.layout-picker::backdrop {
+  background: #15191e42;
+}
+.layout-picker h2 {
+  margin: 0 0 16px;
+  font-size: 15px;
+}
+.layout-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.layout-options button {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  align-items: stretch;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 3px;
+  border-radius: 4px;
+  min-width: 0;
+  font: inherit;
+}
+.layout-options button:hover,
+.layout-options button:focus-visible {
+  outline: 2px solid #5163d9;
+}
+.layout-preview {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px #d4d6dc;
+  pointer-events: none;
+}
+.layout-preview .scene {
+  position: absolute;
+  inset: 0;
+  transform-origin: top left;
+}
+.layout-picker .layout-cancel {
+  margin-top: 18px;
+  padding: 5px 12px;
+  float: right;
 }

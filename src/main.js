@@ -1,3 +1,23 @@
+import './vector.css';
+import {
+  vectorKinds,
+  createAt,
+  sizeDraft,
+  moveVertex,
+  splitEdge,
+  deleteVertex,
+  resizeDimensions,
+  localContours,
+} from './vector.js';
+import { appendVertexOverlay, strokePanel } from './vector-view.js';
+import { anchorAt, refreshCommentPositions } from './comment-anchors.js';
+import {
+  alignments,
+  alignmentMoves,
+  bindLayerReordering,
+  reorderLayers,
+} from './arrange.js';
+import { chooseColor } from './color-dialog.js';
 import './style.css';
 import { createMediaEditor } from './media-editor.js';
 import './workspace.css';
@@ -23,12 +43,15 @@ import {
   ungroup,
 } from './layers.js';
 import { layerPanel, toggleExpanded } from './layer-panel.js';
-import { updateText } from './text.js';
-import { blankDeck, shape, slide, textItem, uid, blue } from './model.js';
+import { updateText, singleLine } from './text.js';
+import { layoutOptions } from './slide-layouts.js';
+import { chooseLayout } from './layout-picker.js';
+import { inlineText } from './inline-text.js';
+import { blankDeck, slide, textItem, uid } from './model.js';
 import { importDeck } from './import.js';
 import { exportDeck } from './export.js';
 import { defaults, snapAxis, snapTargets } from './grid.js';
-import { el, fontCSS, gridOverlay, icon, itemNode, scene } from './view.js';
+import { el, gridOverlay, icon, itemNode, scene } from './view.js';
 import { esc } from './xml.js';
 import * as platform from './platform.js';
 
@@ -53,7 +76,7 @@ let tool = 'pointer',
   scale = 1,
   fonts = [],
   grid = { ...defaults },
-  busy = false,
+  busy = true,
   present = false,
   editor = null;
 let history = [],
@@ -77,11 +100,14 @@ const commentDrafts = new Map();
 let overview = false,
   inspectorOpen = localStorage.getItem('pure-point.inspector') !== 'closed';
 let tileWidth = 216,
+  selectionScope = 'canvas',
   pickedSlides = new Set(),
   slideAnchor = 0,
   pinPosition = null,
   pinning = false,
   focusComment = null;
+const inspectorSlideHost = el('div', 'inspector-slides');
+const inspectorSlides = slideBrowser(inspectorSlideHost);
 const railSlides = slideBrowser($('.thumbs')),
   overviewSlides = slideBrowser($('.sorter'), { sorter: true });
 animateLogo($('#floating-p'));
@@ -110,7 +136,7 @@ function updateChrome() {
 }
 function commentPins() {
   const sc = $('.artboard>.scene');
-  sc?.querySelectorAll('.comment-pin').forEach((n) => n.remove());
+  sc?.querySelectorAll('.comment-pin,.pending-pin').forEach((n) => n.remove());
   if (!sc || tab !== 'comments' || !inspectorOpen || overview) return;
   (active().comments || []).forEach((c, i) => {
     const b = el(
@@ -170,10 +196,14 @@ function snapshot() {
     index,
     selection,
     additionalSelection: [...additionalSelection],
+    slideSelection: [...pickedSlides],
+    slideAnchor,
+    selectionScope,
     rev: currentRevision,
   };
 }
 function record(before) {
+  refreshCommentPositions(active());
   history.push(before);
   while (
     history.length > 50 ||
@@ -200,13 +230,16 @@ function restore(from, to) {
   setSelection(
     [...(snap.additionalSelection || []), snap.selection].filter(Boolean)
   );
+  pickedSlides = new Set(snap.slideSelection);
+  slideAnchor = snap.slideAnchor ?? index;
+  selectionScope = snap.selectionScope || 'canvas';
   currentRevision = snap.rev;
   render();
 }
 function status() {
   const dirty =
     currentRevision !== savedRevision ||
-    Boolean(editor && editor.input.value !== editor.o.text);
+    Boolean(editor && editor.read() !== editor.o.text);
   if (dirty !== lastDirty) {
     lastDirty = dirty;
     platform.dirtyFlag(dirty);
@@ -234,11 +267,14 @@ function status() {
 function renderThumbs() {
   $('.head-count').textContent = deck.slides.length;
   railSlides.render(deck, assets, index, slideIds());
+  if (tab === 'slides' && inspectorSlideHost.isConnected)
+    inspectorSlides.render(deck, assets, index, slideIds());
   if (overview) overviewSlides.render(deck, assets, index, slideIds());
 }
 function setOverview(on) {
   finishText();
   overview = on;
+  selectionScope = on ? 'slides' : 'canvas';
   pinning = false;
   pinPosition = null;
   tool = 'pointer';
@@ -440,7 +476,11 @@ function sizing() {
   $('.page-label').textContent = 'Slide ' + (index + 1);
   drawRulers();
 }
+let vectorEdit = null;
 function setSelection(ids) {
+  if (vectorEdit && (ids.length !== 1 || ids[0] !== vectorEdit.id))
+    vectorEdit = null;
+  if (ids.length) selectionScope = 'canvas';
   const unique = [...new Set(ids)];
   selection = unique.pop() || null;
   additionalSelection = unique;
@@ -465,6 +505,11 @@ function drawSelection() {
   const entries = selectedEntries().filter((e) => !e.hidden && !e.locked);
   if (!entries.length) return;
   const layer = el('div', 'selection');
+  if (entries.length === 1 && vectorEdit?.id === entries[0].object.id) {
+    appendVertexOverlay(layer, entries[0], vectorEdit.selected, scale);
+    sc.append(layer);
+    return;
+  }
   const frame = (entry) => {
     const box = el(
       'div',
@@ -582,7 +627,13 @@ function layerAction(action, id) {
 const field = (label, key, value, min, max, scope = 'object') =>
   `<label class="field">${label}<input aria-label="${label}" type="number" step="any" data-scope="${scope}" data-field="${key}" value="${Number((Number(value) * dimension(key)).toFixed(2))}" min="${min * dimension(key)}" max="${max * dimension(key)}"></label>`;
 const swatch = (label, col, key) =>
-  `<div class="property"><span>${label}</span><label class="swatch"><i style="background:${col || 'transparent'}"></i>${col ? esc(col.slice(1).toUpperCase()) : 'None'}<input type="color" aria-label="${label}" data-color="${key}" value="${col || '#ffffff'}"></label></div>`;
+  `<div class="property"><span>${esc(label)}</span><button type="button" class="swatch" aria-label="${esc(label)}" data-color="${key}" data-value="${esc(col || '')}"><i style="background:${esc(col || 'transparent')}"></i>${col ? esc(col.slice(1).toUpperCase()) : 'None'}</button></div>`;
+const alignControls = () =>
+  '<div class="object-alignment" role="group" aria-label="Object alignment">' +
+  alignments
+    .map(([dir, label]) => action('objectAlign-' + dir, label, 'object' + dir))
+    .join('') +
+  '</div>';
 const toggle = (id, on, label) =>
   `<button class="toggle ${on ? 'on' : ''}" data-action="${id}" role="switch" aria-checked="${on}" aria-label="${label}" title="${label}"><i></i></button>`;
 const section = (label, body, control = '') =>
@@ -629,7 +680,15 @@ function properties() {
     .forEach((b) => b.classList.toggle('active', tab === b.dataset.action));
   const layers = selectedEntries();
   if (tab === 'comments') {
+    const entries = layerEntries(active().items);
+    const target = pinPosition?.objectId
+      ? entries.get(pinPosition.objectId)
+      : pinPosition
+        ? null
+        : entries.get(selection);
     renderComments(container, active(), {
+      targetName: target?.object.name,
+      nameFor: (id) => entries.get(id)?.object.name,
       pinning,
       draft: commentDrafts.get(active().id) || '',
       onDraft: (value) => commentDrafts.set(active().id, value),
@@ -643,7 +702,10 @@ function properties() {
         change(() => {
           (active().comments ??= []).push({
             ...c,
-            ...(pinPosition || { x: deck.w * 0.5, y: deck.h * 0.5 }),
+            ...(anchorAt(target, pinPosition) || {
+              x: deck.w * 0.5,
+              y: deck.h * 0.5,
+            }),
           });
           pinPosition = null;
           pinning = false;
@@ -665,12 +727,24 @@ function properties() {
     });
     return;
   }
+  if (tab === 'slides') {
+    if (!container.contains(inspectorSlideHost)) {
+      container.innerHTML =
+        '<div class="section-heading inspector-slides-head"><h3>Slides</h3>' +
+        action('addSlide', 'Add slide', 'plus') +
+        '</div>';
+      container.append(inspectorSlideHost);
+      inspectorSlides.render(deck, assets, index, slideIds());
+    } else inspectorSlides.highlight(index, slideIds());
+    return;
+  }
   if (tab === 'layers') {
     container.innerHTML = layerPanel(
       active().items,
       new Set(selectedIds()),
       canGroup(layers),
-      layers.some((e) => e.object.kind === 'group' && !e.locked)
+      layers.some((e) => e.object.kind === 'group' && !e.locked),
+      layers.length && layers.every((e) => !e.locked) ? alignControls() : ''
     );
     return;
   }
@@ -684,7 +758,10 @@ function properties() {
     container.innerHTML =
       section(
         locked ? 'Locked layer' : layers.length + ' layers selected',
-        '<div class="layer-set">' + options + '</div>'
+        (locked ? '' : alignControls()) +
+          '<div class="layer-set">' +
+          options +
+          '</div>'
       ) + gridPanel();
     return;
   }
@@ -708,7 +785,7 @@ function properties() {
       field('Height (px)', 'h', o.h, 0.1, 100000);
     let html = section(
       'Position',
-      `<div class="form-grid">${fields}</div>`,
+      `${alignControls()}<div class="form-grid">${fields}</div>`,
       action('delete', 'Delete object', 'delete')
     );
     if (o.kind === 'text' || o.text) {
@@ -725,9 +802,35 @@ function properties() {
                   /^(regular|roman|normal|book|W3)$/i.test(f.style)
                 ) || members[0]
               )?.style || 'Regular';
+      const lineHeight = o.lineHeight || 1;
+      const custom =
+        typeof lineHeight === 'string'
+          ? parseFloat(lineHeight) + ' pt'
+          : Number(lineHeight.toFixed(3)).toString();
+      const lineChoices = [1, 1.15, 1.5, 2].map((n) => [
+        String(n),
+        n.toFixed(n === 1.15 ? 2 : 1),
+      ]);
+      if (!lineChoices.some(([value]) => value === String(lineHeight)))
+        lineChoices.unshift([String(lineHeight), custom]);
+      const lineSelect =
+        '<label class="field">Line spacing<select data-line-spacing aria-label="Line spacing">' +
+        lineChoices
+          .map(
+            ([v, label]) =>
+              '<option value="' +
+              esc(v) +
+              '"' +
+              (String(lineHeight) === v ? ' selected' : '') +
+              '>' +
+              esc(label) +
+              '</option>'
+          )
+          .join('') +
+        '</select></label>';
       html += section(
         'Text',
-        `<div class="form-grid"><label class="field wide">Font family<select data-font="family" aria-label="Font family">${families.map((f) => `<option${f === family ? ' selected' : ''}>${esc(f)}</option>`).join('')}</select></label><label class="field">Style<select data-font="face" aria-label="Style">${members.map((f) => `<option value="${esc(f.full)}"${f.style === style ? ' selected' : ''}>${esc(f.style)}</option>`).join('')}</select></label>${field('Size (pt)', 'size', o.size, 1, 4000)}</div><div class="segmented">${['bold', 'italic', 'alignleft', 'aligncenter', 'alignright'].map((k, i) => action(k, ['Bold', 'Italic', 'Align left', 'Align center', 'Align right'][i], k, 'icon-btn ' + (o[k] || 'align' + o.align === k ? 'on' : ''))).join('')}</div>${swatch('Text color', o.color, 'color')}`
+        `<div class="form-grid"><label class="field wide">Font family<select data-font="family" aria-label="Font family">${families.map((f) => `<option${f === family ? ' selected' : ''}>${esc(f)}</option>`).join('')}</select></label><label class="field">Style<select data-font="face" aria-label="Style">${members.map((f) => `<option value="${esc(f.full)}"${f.style === style ? ' selected' : ''}>${esc(f.style)}</option>`).join('')}</select></label>${field('Size (pt)', 'size', o.size, 1, 4000)}${field('Letter spacing (pt)', 'letterSpacing', o.letterSpacing || 0, -40, 40)}${lineSelect}</div><div class="segmented">${['bold', 'italic', 'alignleft', 'aligncenter', 'alignright'].map((k, i) => action(k, ['Bold', 'Italic', 'Align left', 'Align center', 'Align right'][i], k, 'icon-btn ' + (o[k] || 'align' + o.align === k ? 'on' : ''))).join('')}</div>${swatch('Text color', o.color, 'color')}`
       );
     }
     if (
@@ -736,6 +839,8 @@ function properties() {
       )
     )
       html += section('Appearance', swatch('Fill', o.fill, 'fill'));
+    if (vectorKinds.has(o.kind))
+      html += strokePanel(o, { section, field, swatch });
     if (o.kind === 'unsupported')
       html += section(
         'PowerPoint object',
@@ -758,7 +863,7 @@ function loadFonts() {
     names.set(JSON.stringify([o.font, o.bold, o.italic]), o);
   }
   function visit(o) {
-    if (o.text) {
+    if (o.text || o.kind === 'text') {
       collect(o);
       for (const p of o.paragraphs || [])
         for (const r of p.runs) {
@@ -776,6 +881,9 @@ function loadFonts() {
     platform.loadTypeface(f.font, fonts, f.bold, f.italic);
 }
 function setTool(value) {
+  if (drag?.mode === 'draw-vector' || drag?.mode === 'vertex')
+    endDrag({ pointerId: drag.id }, true);
+  vectorEdit = null;
   tool = value;
   renderBoard();
 }
@@ -787,23 +895,72 @@ function updateGrid(key, value) {
 }
 function updateObject(key, value) {
   const o = selected();
-  if (!o || selectedEntries().some((e) => e.locked) || o[key] === value) return;
-  change(() => {
-    o[key] = value;
-    if (o.paragraphs) {
-      for (const p of o.paragraphs) {
-        if (key === 'align') p.align = value;
-        if (['font', 'size', 'color', 'bold', 'italic'].includes(key)) {
-          p.base[key] = value;
-          if (key === 'font') p.base.eastAsianFont = value;
-          p.runs.forEach((r) => {
-            r[key] = value;
-            if (key === 'font') r.eastAsianFont = value;
-          });
-        }
+  if (!o || selectedEntries().some((e) => e.locked)) return;
+  const runStyle = [
+    'font',
+    'size',
+    'color',
+    'bold',
+    'italic',
+    'letterSpacing',
+  ].includes(key);
+  const paragraphStyle = key === 'align' || key === 'lineHeight';
+  const mixed = o.paragraphs?.some((p) =>
+    runStyle
+      ? p.base[key] !== value || p.runs.some((r) => r[key] !== value)
+      : paragraphStyle && p[key] !== value
+  );
+  if (o[key] === value && !mixed) return;
+  const editing = editor?.o === o ? editor : null;
+  const before = editing?.creation?.before || snapshot();
+  const mark = editing?.remember();
+  if (editing) {
+    const text = editing.read();
+    editor = null;
+    editing.close();
+    if (text !== o.text) updateText(o, text);
+    if (o.kind === 'text' && !o.placeholder)
+      o.name = text.slice(0, 40) || 'Text';
+  }
+  o[key] = value;
+  if (key === 'w' && o.autoWidth) o.autoWidth = false;
+  if (
+    ['dash', 'strokeWidth', 'startArrow', 'endArrow'].includes(key) &&
+    !o.stroke
+  )
+    o.stroke = '#222521';
+  for (const p of o.paragraphs || []) {
+    if (paragraphStyle) p[key] = value;
+    if (runStyle)
+      for (const style of [p.base, ...p.runs]) {
+        style[key] = value;
+        if (key === 'font') style.eastAsianFont = value;
       }
-    }
-  });
+  }
+  if (o.autoWidth && (runStyle || paragraphStyle)) {
+    const node = itemNode(o, assets);
+    node.style.cssText +=
+      ';position:fixed;visibility:hidden;left:-100000px;top:0';
+    document.body.append(node);
+    const text = node.querySelector('.item-text');
+    Object.assign(text.style, {
+      width: 'max-content',
+      height: 'auto',
+      right: 'auto',
+      bottom: 'auto',
+    });
+    o.w = Math.max(2, text.offsetWidth);
+    o.h = Math.max(o.size * singleLine, text.offsetHeight);
+    node.remove();
+  }
+  const provisional = editing?.creation && !o.text;
+  if (!provisional) record(before);
+  render();
+  if (editing) {
+    startText();
+    editor?.restore(mark);
+    if (editor && provisional) editor.creation = editing.creation;
+  }
 }
 function switchSlide(i) {
   if (i < 0 || i >= deck.slides.length) return;
@@ -815,6 +972,7 @@ function switchSlide(i) {
   pinning = false;
   focusComment = null;
   railSlides.reveal(active());
+  inspectorSlides.reveal(active());
   setSelection([]);
   tool = 'pointer';
   render();
@@ -843,16 +1001,17 @@ const mediaEditor = createMediaEditor({
 mediaEditor.bind($('.stage'));
 function insertText(point) {
   finishText();
-  const w = Math.min(260, deck.w),
-    h = Math.min(54, deck.h);
   const creation = { before: snapshot(), selected: selectedIds() };
+  const size = 24,
+    height = size * singleLine;
   const o = textItem(
     '',
-    Math.max(0, Math.min(point.x, deck.w - w)),
-    Math.max(0, Math.min(point.y, deck.h - h)),
-    w,
-    h,
-    28
+    point.x,
+    Math.max(0, point.y - height / 2),
+    2,
+    height,
+    size,
+    { font: 'Yu Gothic', autoWidth: true }
   );
   active().items.push(o);
   setSelection([o.id]);
@@ -860,91 +1019,92 @@ function insertText(point) {
   tool = 'pointer';
   render();
   startText();
-  editor.creation = creation;
+  if (editor) editor.creation = creation;
 }
-function startText(allowEmptyShape = false) {
-  const o = selected();
-  const entry = selectedEntries()[0];
+function startText(event) {
+  const entry = selectedEntries()[0],
+    o = entry?.object;
   if (
+    editor ||
     !o ||
-    entry?.hidden ||
-    entry?.locked ||
-    !(allowEmptyShape || o.kind === 'text' || o.text) ||
-    editor
+    entry.hidden ||
+    entry.locked ||
+    !(o.kind === 'text' || o.text || o.placeholder)
   )
     return;
-  const sc = $('.artboard>.scene'),
-    input = el('textarea', 'text-edit');
-  const [l, t, r, b] = o.inset;
-  Object.assign(input.style, {
-    left: o.x + 'px',
-    top: o.y + 'px',
-    width: o.w + 'px',
-    height: Math.max(o.h, o.size * 1.5) + 'px',
-    color: o.color,
-    fontSize: o.size + 'px',
-    fontFamily: fontCSS(o.font),
-    fontWeight: o.bold ? 'bold' : 'normal',
-    fontStyle: o.italic ? 'italic' : 'normal',
-    textAlign: o.align,
-    padding: `${t}px ${r}px ${b}px ${l}px`,
-    background: o.fill || active().bg,
-    transform: `rotate(${o.rotation}deg)`,
+  const item = $('.artboard [data-id="' + o.id + '"]');
+  if (!item) return;
+  editor = inlineText({
+    item,
+    object: o,
+    event: event?.clientX !== undefined ? event : null,
+    finish: finishText,
+    onInput: status,
   });
-  if (entry?.parent)
-    Object.assign(input.style, {
-      left: '0',
-      top: '0',
-      transformOrigin: '0 0',
-      transform: entry.transform.multiply(shapeTransform(o)).toString(),
-    });
-  input.value = o.text;
-  input.setAttribute('aria-label', 'Slide text');
-  sc.append(input);
-  editor = { input, o };
-  input.oninput = status;
-  input.onblur = () => finishText();
-  input.onkeydown = (e) => {
-    if (e.isComposing) return;
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      finishText(true);
-    }
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault();
-      finishText();
-    }
-  };
-  input.focus();
-  input.select();
 }
-function finishText(cancel = false) {
+function finishText(cancel = false, deselect = false, passive = false) {
   if (!editor) return;
-  const { input, o, creation } = editor;
+  const activeEditor = editor,
+    { o, creation } = activeEditor;
+  const value = activeEditor.read(),
+    measured = activeEditor.size();
   editor = null;
-  input.onblur = null;
-  const value = input.value;
-  input.remove();
-  if (creation) {
-    if (cancel || !value.trim()) {
-      active().items = active().items.filter((item) => item !== o);
-      setSelection(creation.selected);
-    } else {
-      updateText(o, value);
-      o.name = value.slice(0, 40);
-      record(creation.before);
-    }
-    render();
-    return;
+  activeEditor.close();
+  const before = creation?.before || snapshot();
+  if (creation && (cancel || !value.trim())) {
+    active().items = active().items.filter((item) => item !== o);
+    setSelection(creation.selected);
+  } else if (!cancel && (creation || o.text !== value)) {
+    updateText(o, value);
+    if (o.autoWidth) Object.assign(o, measured);
+    if (o.kind === 'text' && !o.placeholder)
+      o.name = value.slice(0, 40) || 'Text';
+    record(before);
   }
-  status();
-  if (!cancel && o.text !== value)
-    change(() => {
-      updateText(o, value);
-      if (o.kind === 'text') o.name = value.slice(0, 40) || 'Text';
-    });
+  if (deselect) setSelection([]);
+  if (passive) {
+    renderBoard();
+    status();
+  } else render();
 }
-function menu(anchor, rows) {
+// Canvas pointer handlers normally prevent the browser's focus change. Commit
+// first so clicking empty space can release both the caret and the selection.
+document.addEventListener(
+  'pointerdown',
+  (e) => {
+    if (!editor || editor.input.contains(e.target)) return;
+    if (editor.composing) {
+      editor.input.blur();
+      return;
+    }
+    if (
+      e.target.closest(
+        '[data-font],[data-line-spacing],[data-field="letterSpacing"],[data-field="size"],[data-color="color"],[data-action="bold"],[data-action="italic"],[data-action^="align"],dialog'
+      )
+    ) {
+      editor.remember();
+      return;
+    }
+    if (e.target.closest('.stage')) finishText(false, true);
+    else {
+      // Keep the clicked navigator or command mounted until its click handler runs.
+      finishText(false, true, true);
+      document.addEventListener(
+        'click',
+        () =>
+          setTimeout(() => {
+            if (!editor) {
+              renderThumbs();
+              properties();
+            }
+          }, 0),
+        { once: true, capture: true }
+      );
+    }
+  },
+  true
+);
+function menu(anchor, rows, point) {
   $('.menu')?.remove();
   const m = el('div', 'menu');
   m.setAttribute('role', 'menu');
@@ -956,8 +1116,14 @@ function menu(anchor, rows) {
     .join('');
   document.body.append(m);
   const b = anchor.getBoundingClientRect();
-  m.style.left = Math.min(b.left, innerWidth - m.offsetWidth - 6) + 'px';
-  m.style.top = Math.min(b.bottom + 4, innerHeight - m.offsetHeight - 8) + 'px';
+  m.style.left =
+    Math.max(4, Math.min(point?.x ?? b.left, innerWidth - m.offsetWidth - 6)) +
+    'px';
+  m.style.top =
+    Math.max(
+      4,
+      Math.min(point?.y ?? b.bottom + 4, innerHeight - m.offsetHeight - 8)
+    ) + 'px';
   m.onkeydown = (e) => {
     const buttons = [...m.querySelectorAll('button:not(:disabled)')],
       i = buttons.indexOf(document.activeElement);
@@ -1015,6 +1181,7 @@ function reset(next, nextBase, nextTitle, nextPath) {
   overview = false;
   commentDrafts.clear();
   railSlides.clear();
+  inspectorSlides.clear();
   overviewSlides.clear();
   pickedSlides.clear();
   slideAnchor = 0;
@@ -1055,6 +1222,7 @@ async function newDocument() {
   }
 }
 function chooseSlide(i, event) {
+  selectionScope = 'slides';
   const id = deck.slides[i].id;
   if (overview || event.shiftKey || event.metaKey || event.ctrlKey) {
     finishText();
@@ -1251,8 +1419,74 @@ function bindSlideList(host, browser) {
     });
   });
 }
+bindLayerReordering(
+  $('#properties'),
+  () => layerEntries(active().items),
+  selectedIds,
+  change
+);
 bindSlideList($('.thumbs'), railSlides);
 bindSlideList($('.sorter'), overviewSlides);
+bindSlideList(inspectorSlideHost, inspectorSlides);
+function objectMenu(e) {
+  if (
+    busy ||
+    present ||
+    e.target.closest(
+      'input,textarea,[contenteditable="true"],.sorter,.floating-tools'
+    )
+  )
+    return;
+  const row = e.target.closest('[data-layer-row]'),
+    item = e.target.closest('[data-id]');
+  if (!row && !e.target.closest('.artboard')) return;
+  e.preventDefault();
+  finishText();
+  const id = row?.dataset.layerRow || item?.dataset.id;
+  if (id && !selectedIds().includes(id)) select(id);
+  if (!id) select(null);
+  selectionScope = 'canvas';
+  const entries = selectedEntries(),
+    o = selected(),
+    rows = [];
+  if (entries.length === 1 && !entries[0].locked) {
+    if (o.kind === 'text' || o.text || o.placeholder)
+      rows.push(['editText', 'Edit text', 'text']);
+    if (vectorKinds.has(o.kind) && !o.placeholder)
+      rows.push(['editPath', 'Edit path', 'path']);
+    if (o.kind === 'image' || o.kind === 'video')
+      rows.push([
+        'replaceMedia',
+        o.kind === 'image' ? 'Replace image…' : 'Replace video…',
+        o.kind,
+      ]);
+  }
+  if (canGroup(entries)) rows.push(['group', 'Group selection', 'group', '⌘G']);
+  if (entries.some((entry) => !entry.locked && entry.object.kind === 'group'))
+    rows.push(['ungroup', 'Ungroup', 'ungroup', '⇧⌘G']);
+  if (entries.length) {
+    if (reorderLayers(entries, null, 'front'))
+      rows.push(['front', 'Bring to front', 'layers']);
+    if (reorderLayers(entries, null, 'back'))
+      rows.push(['back', 'Send to back', 'layers']);
+    rows.push([
+      'toggleLayerVisibility',
+      entries.every((x) => x.object.hidden) ? 'Show' : 'Hide',
+      'eye',
+    ]);
+    rows.push([
+      'toggleLayerLock',
+      entries.every((x) => x.object.locked) ? 'Unlock' : 'Lock',
+      'lock',
+    ]);
+  }
+  rows.push(['selectionComment', 'Add comment…', 'comment']);
+  if (entries.some((entry) => !entry.locked))
+    rows.push(['delete', 'Delete', 'delete']);
+  menu(row || $('.artboard'), rows, { x: e.clientX, y: e.clientY });
+}
+$('.stage').addEventListener('contextmenu', objectMenu);
+$('#properties').addEventListener('contextmenu', objectMenu);
 bindPinch($('.stage'), zoomAt);
 if (platform.native)
   window.addEventListener(
@@ -1294,7 +1528,11 @@ $('.stage').addEventListener(
     if (pinning) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      pinPosition = coordinates(e);
+      const hit = e.target.closest('[data-id]');
+      pinPosition = anchorAt(
+        layerEntries(active().items).get(hit?.dataset.id),
+        coordinates(e)
+      );
       pinning = false;
       commentPins();
       properties();
@@ -1453,7 +1691,10 @@ async function execute(id, button) {
     restore(id === 'undo' ? history : future, id === 'undo' ? future : history);
     return;
   }
-  finishText();
+  if (
+    !['bold', 'italic', 'alignleft', 'aligncenter', 'alignright'].includes(id)
+  )
+    finishText();
   if (
     [
       'save',
@@ -1495,21 +1736,71 @@ async function execute(id, button) {
     return;
   }
   if (id === 'addSlide') {
+    const previous = active();
+    const next = await chooseLayout(
+      layoutOptions(base, deck, previous),
+      deck,
+      assets
+    );
+    if (!next) return;
     change(() => {
-      const previous = active();
       index++;
-      deck.slides.splice(index, 0, {
-        ...slide('', previous.bg),
-        sectionId: previous.sectionId,
-        layoutPath: previous.layoutPath,
-        back: structuredClone(previous.back || []),
-      });
+      next.sectionId = previous.sectionId;
+      deck.slides.splice(index, 0, next);
       pickedSlides.clear();
       slideAnchor = index;
       setSelection([]);
       tool = 'pointer';
     });
     $('.select-slide.active')?.scrollIntoView({ block: 'nearest' });
+    return;
+  }
+  if (id.startsWith('objectAlign-')) {
+    const moves = alignmentMoves(
+      selectedEntries(),
+      id.slice('objectAlign-'.length),
+      deck
+    );
+    if (moves.length)
+      change(() => {
+        for (const { object, delta } of moves) {
+          object.x += delta.x;
+          object.y += delta.y;
+        }
+      });
+    return;
+  }
+  if (id === 'front' || id === 'back') {
+    const apply = reorderLayers(selectedEntries(), null, id);
+    if (apply) change(apply);
+    return;
+  }
+  if (id === 'selectionComment') {
+    tab = 'comments';
+    inspectorOpen = true;
+    pinning = false;
+    pinPosition = null;
+    updateChrome();
+    properties();
+    commentPins();
+    $('.comment-form textarea')?.focus();
+    return;
+  }
+  if (id === 'editPath') {
+    const entry = selectedEntries()[0];
+    if (entry && !entry.locked && vectorKinds.has(entry.object.kind)) {
+      vectorEdit = { id: entry.object.id, selected: null };
+      drawSelection();
+      properties();
+    }
+    return;
+  }
+  if (id === 'editText') {
+    startText();
+    return;
+  }
+  if (id === 'replaceMedia') {
+    await mediaEditor.replaceMedia(selected());
     return;
   }
   if (id === 'newSection' || id === 'moveSection') {
@@ -1540,12 +1831,13 @@ async function execute(id, button) {
   }
   if (id === 'deleteSlide') {
     const ids = slideIds();
-    if (deck.slides.length === ids.size) {
-      toast('Keep at least one slide in the presentation.');
-      return;
-    }
     change(() => {
+      const remainingBefore = deck.slides
+        .slice(0, index)
+        .filter((s) => !ids.has(s.id)).length;
       deck.slides = deck.slides.filter((s) => !ids.has(s.id));
+      if (!deck.slides.length) deck.slides.push(slide());
+      index = remainingBefore;
       index = Math.min(index, deck.slides.length - 1);
       pickedSlides.clear();
       slideAnchor = index;
@@ -1567,8 +1859,13 @@ async function execute(id, button) {
     );
     return;
   }
-  if (['layers', 'design', 'comments'].includes(id)) {
+  if (['layers', 'design', 'comments', 'slides'].includes(id)) {
     tab = id;
+    if (id === 'slides') {
+      selectionScope = 'slides';
+      setSelection([]);
+      drawSelection();
+    }
     pinning = false;
     pinPosition = null;
     properties();
@@ -1609,6 +1906,24 @@ async function execute(id, button) {
 const run = (id, b) => execute(id, b).catch(fail);
 document.addEventListener('click', (e) => {
   if (busy || e.target.closest('dialog')) return;
+  const swatchButton = e.target.closest('button[data-color]');
+  if (swatchButton) {
+    const key = swatchButton.dataset.color;
+    chooseColor(
+      swatchButton.getAttribute('aria-label'),
+      swatchButton.dataset.value,
+      (value) => {
+        if (key === 'bg') {
+          if (active().bg?.toUpperCase() !== value)
+            change(() => {
+              active().bg = value;
+            });
+        } else if (selected()?.[key]?.toUpperCase() !== value)
+          updateObject(key, value);
+      }
+    );
+    return;
+  }
   const b = e.target.closest('[data-action]');
   if (b) {
     run(b.dataset.action, b);
@@ -1666,6 +1981,17 @@ document.addEventListener('click', (e) => {
 document.addEventListener('change', (e) => {
   if (busy) return;
   const input = e.target;
+  if (input.hasAttribute('data-line-spacing')) {
+    updateObject(
+      'lineHeight',
+      input.value.endsWith('px') ? input.value : Number(input.value)
+    );
+    return;
+  }
+  if (input.dataset.vectorField) {
+    updateObject(input.dataset.vectorField, input.value);
+    return;
+  }
   if (input.id === 'zoom') {
     chooseZoom(input.value);
     return;
@@ -1698,17 +2024,23 @@ const coordinates = (e) => {
   return { x: (e.clientX - r.left) / scale, y: (e.clientY - r.top) / scale };
 };
 $('.stage').addEventListener('pointerdown', (e) => {
+  if (drag && drag.id !== e.pointerId) return;
   if (
     busy ||
     e.button !== 0 ||
     e.target.closest(
-      '.floating-tools,textarea,.sorter,.comment-pin,.video-controls,[data-media-control],.media-controls,iframe'
+      '.floating-tools,textarea,.text-edit,.sorter,.comment-pin,.video-controls,[data-media-control],.media-controls,iframe'
     )
   )
     return;
   const art = e.target.closest('.artboard'),
     p = coordinates(e);
   if (!art && !e.target.closest('.world,.viewport')) return;
+  selectionScope = 'canvas';
+  if (pickedSlides.size) {
+    pickedSlides.clear();
+    railSlides.highlight(index, slideIds());
+  }
   if (tool !== 'pointer' && !art) return;
   if (tool !== 'pointer') {
     e.preventDefault();
@@ -1716,21 +2048,63 @@ $('.stage').addEventListener('pointerdown', (e) => {
       insertText(p);
       return;
     }
-    const kind = tool,
-      w = Math.min(deck.w, 120),
-      h = Math.min(deck.h, 100);
-    addObject(
-      shape(
-        kind,
-        kind === 'rect' ? 'Rectangle' : 'Ellipse',
-        Math.min(deck.w - w, Math.max(0, p.x)),
-        Math.min(deck.h - h, Math.max(0, p.y)),
-        w,
-        h,
-        { fill: blue }
-      )
-    );
+    if (['rect', 'ellipse', 'line'].includes(tool)) {
+      drag = {
+        mode: 'draw-vector',
+        id: e.pointerId,
+        start: p,
+        draft: createAt(tool, p),
+        targets: snapTargets(deck, active(), null, grid),
+        moved: false,
+      };
+      $('.stage').setPointerCapture(e.pointerId);
+    }
     return;
+  }
+  const pointHandle = e.target.closest('[data-vertex]');
+  if (pointHandle && vectorEdit) {
+    const entry = selectedEntries()[0];
+    if (!entry || entry.locked || entry.hidden) return;
+    const key = {
+      path: Number(pointHandle.dataset.path),
+      vertex: Number(pointHandle.dataset.vertex),
+      arm: pointHandle.dataset.arm,
+    };
+    const inverse = entry.transform
+      .multiply(shapeTransform(entry.object))
+      .inverse();
+    const initial = structuredClone(entry.object),
+      n = localContours(initial)[key.path].nodes[key.vertex];
+    vectorEdit.selected = { path: key.path, vertex: key.vertex };
+    drag = {
+      mode: 'vertex',
+      id: e.pointerId,
+      start: p,
+      before: snapshot(),
+      key,
+      initial,
+      o: entry.object,
+      inverse,
+      origin: inverse.transformPoint(p),
+      anchor: key.arm ? n[key.arm] : n,
+      moved: false,
+      targets: snapTargets(deck, active(), entry.object.id, grid),
+    };
+    e.preventDefault();
+    $('.stage').setPointerCapture(e.pointerId);
+    drawSelection();
+    return;
+  }
+  if (e.target.closest('[data-segment]')) {
+    e.preventDefault();
+    return;
+  }
+  if (vectorEdit) {
+    if (e.target.closest('[data-id]')?.dataset.id === vectorEdit.id) {
+      e.preventDefault();
+      return;
+    }
+    vectorEdit = null;
   }
   const handle = e.target.closest('[data-handle]'),
     target = e.target.closest('[data-id]');
@@ -1783,6 +2157,9 @@ $('.stage').addEventListener('pointerdown', (e) => {
       y: entry.object.y,
       w: entry.object.w,
       h: entry.object.h,
+      ...(entry.object.kind === 'text'
+        ? { autoWidth: entry.object.autoWidth }
+        : {}),
     },
   }));
   const excluded = new Set(entries.map((entry) => entry.object.id));
@@ -1837,6 +2214,32 @@ window.addEventListener('pointermove', (e) => {
     if (Math.hypot(dx, dy) * scale < 3) return;
     drag.moved = true;
     $('.stage').setPointerCapture(e.pointerId);
+  }
+  if (drag.mode === 'draw-vector' || drag.mode === 'vertex') {
+    const snap = grid.snap && !e.altKey && !e.shiftKey;
+    const sx = snap ? snapAxis([p.x], drag.targets.x, 5 / scale) : { delta: 0 };
+    const sy = snap ? snapAxis([p.y], drag.targets.y, 5 / scale) : { delta: 0 };
+    const end = { x: p.x + sx.delta, y: p.y + sy.delta };
+    if (drag.mode === 'draw-vector') {
+      sizeDraft(drag.draft, drag.start, end, e.shiftKey);
+      const preview = itemNode(drag.draft, assets);
+      preview.classList.add('vector-draft');
+      const paper = $('.artboard>.scene');
+      paper.querySelector('.vector-draft')?.remove();
+      paper.append(preview);
+    } else {
+      const pos = drag.inverse.transformPoint(end);
+      moveVertex(drag.o, drag.initial, drag.key, {
+        x: drag.anchor.x + pos.x - drag.origin.x,
+        y: drag.anchor.y + pos.y - drag.origin.y,
+      });
+      $('.artboard [data-id="' + drag.o.id + '"]')?.replaceWith(
+        itemNode(drag.o, assets, true)
+      );
+      drawSelection();
+    }
+    guides(sx.guide, sy.guide);
+    return;
   }
   if (drag.mode === 'marquee') {
     const box = {
@@ -1926,9 +2329,11 @@ window.addEventListener('pointermove', (e) => {
       gx = sx.guide;
       gy = sy.guide;
     }
-    o.w = Math.max(1, from.w + (west ? -lx : lx));
-    o.h = Math.max(1, from.h + (north ? -ly : ly));
-    if (e.shiftKey && from.w > 0) o.h = (o.w * from.h) / from.w;
+    Object.assign(
+      o,
+      resizeDimensions(o, from, west ? -lx : lx, north ? -ly : ly, e.shiftKey)
+    );
+    if (o.kind === 'text') o.autoWidth = false;
     const mx = ((o.w - from.w) * (west ? -1 : 1)) / 2,
       my = ((o.h - from.h) * (north ? -1 : 1)) / 2;
     o.x = from.x + from.w / 2 + mx * c - my * s - o.w / 2;
@@ -1947,6 +2352,30 @@ function endDrag(e, cancel) {
   const stage = $('.stage');
   if (stage.hasPointerCapture(e.pointerId))
     stage.releasePointerCapture(e.pointerId);
+  if (d.mode === 'draw-vector') {
+    $('.artboard .vector-draft')?.remove();
+    $('.artboard .guide-layer')?.remove();
+    if (
+      !cancel &&
+      d.moved &&
+      (d.draft.kind === 'line'
+        ? Math.max(d.draft.w, d.draft.h) > 0
+        : d.draft.w > 0 && d.draft.h > 0)
+    )
+      addObject(d.draft);
+    return;
+  }
+  if (d.mode === 'vertex') {
+    if (d.moved) {
+      if (cancel) {
+        delete d.o.contours;
+        delete d.o.paths;
+        Object.assign(d.o, d.initial);
+      } else record(d.before);
+      render();
+    }
+    return;
+  }
   if (d.mode === 'marquee') {
     $('.artboard .marquee')?.remove();
     if (cancel) setSelection(d.prior);
@@ -1966,15 +2395,49 @@ window.addEventListener('pointerup', (e) => endDrag(e, false));
 window.addEventListener('pointercancel', (e) => endDrag(e, true));
 $('.stage').addEventListener('dblclick', (e) => {
   const n = e.target.closest('[data-id]');
-  if (e.target.closest('textarea,.comment-pin,.floating-tools,.sorter') || busy)
+  if (
+    e.target.closest(
+      'textarea,.text-edit,.comment-pin,.floating-tools,.sorter'
+    ) ||
+    busy
+  )
     return;
+  const segment = e.target.closest('[data-segment]');
+  if (vectorEdit && segment) {
+    const entry = selectedEntries()[0];
+    if (!entry || entry.locked || entry.hidden) return;
+    const pt = entry.transform
+      .multiply(shapeTransform(entry.object))
+      .inverse()
+      .transformPoint(coordinates(e));
+    const path = Number(segment.dataset.path);
+    change(() => {
+      const vertex = splitEdge(
+        entry.object,
+        path,
+        Number(segment.dataset.segment),
+        pt
+      );
+      vectorEdit.selected = { path, vertex };
+    });
+    return;
+  }
+  if (e.target.closest('[data-vertex]')) return;
   if (n) {
     select(n.dataset.id);
     const o = selected();
+    if (o && vectorKinds.has(o.kind) && !o.locked && !o.placeholder) {
+      vectorEdit = { id: o.id, selected: null };
+      drawSelection();
+      properties();
+      e.preventDefault();
+      return;
+    }
     if (!o || o.locked || o.kind === 'image' || o.kind === 'video') return;
-    if (o.kind === 'text' || o.text) startText();
-    else if (['rect', 'ellipse', 'roundRect', 'triangle'].includes(o.kind))
-      startText(true);
+    if (o.kind === 'text' || o.text || o.placeholder) {
+      e.preventDefault();
+      startText(e);
+    }
   } else if (e.target.closest('.artboard')) insertText(coordinates(e));
 });
 document.addEventListener('keydown', (e) => {
@@ -2007,6 +2470,36 @@ document.addEventListener('keydown', (e) => {
     }
     return;
   }
+  if (vectorEdit && !editing) {
+    if (e.key === 'Escape' || e.key === 'Enter') {
+      e.preventDefault();
+      if (drag?.mode === 'vertex') endDrag({ pointerId: drag.id }, true);
+      vectorEdit = null;
+      drawSelection();
+      properties();
+      return;
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      const o = selected(),
+        key = vectorEdit.selected;
+      if (o && key) {
+        const before = snapshot();
+        if (deleteVertex(o, key)) {
+          vectorEdit.selected = null;
+          record(before);
+          render();
+        }
+      }
+      return;
+    }
+  }
+  if (e.key === 'Escape' && drag?.mode === 'draw-vector') {
+    e.preventDefault();
+    endDrag({ pointerId: drag.id }, true);
+    setTool('pointer');
+    return;
+  }
   if (e.key === 'Escape') {
     $('.menu')?.remove();
     if (overview && !editing) {
@@ -2019,6 +2512,22 @@ document.addEventListener('keydown', (e) => {
       renderBoard();
     }
     return;
+  }
+  const slidesFocused =
+    overview ||
+    selectionScope === 'slides' ||
+    !!e.target.closest('[data-slide]');
+  if (!editing && slidesFocused) {
+    if (!cmd && ['Delete', 'Backspace'].includes(e.key)) {
+      e.preventDefault();
+      run('deleteSlide');
+      return;
+    }
+    if (cmd && !e.shiftKey && e.key.toLowerCase() === 'g') {
+      e.preventDefault();
+      if (slideIds().size > 1) run('newSection');
+      return;
+    }
   }
   if (cmd && !editing) {
     const key = e.key.toLowerCase();
@@ -2037,7 +2546,7 @@ document.addEventListener('keydown', (e) => {
       run(layerCommand);
       return;
     }
-    if (key === 'a' && (overview || e.target.closest('.rail'))) {
+    if (key === 'a' && (slidesFocused || e.target.closest('.rail'))) {
       e.preventDefault();
       pickedSlides = new Set(deck.slides.map((s) => s.id));
       renderThumbs();
@@ -2077,6 +2586,21 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   const o = selected();
+  if (o && e.altKey && !e.shiftKey) {
+    const direction = {
+      KeyA: 'left',
+      KeyH: 'hcenter',
+      KeyD: 'right',
+      KeyW: 'top',
+      KeyV: 'vcenter',
+      KeyS: 'bottom',
+    }[e.code];
+    if (direction) {
+      e.preventDefault();
+      run('objectAlign-' + direction);
+      return;
+    }
+  }
   if (
     o &&
     ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)
@@ -2126,6 +2650,7 @@ document.addEventListener('keydown', (e) => {
     v: 'tool-pointer',
     t: 'tool-text',
     r: 'tool-rect',
+    l: 'tool-line',
     o: 'tool-ellipse',
     g: 'gridVisible',
   }[e.key];
@@ -2152,10 +2677,12 @@ new ResizeObserver(() => {
   if (present) drawPresentation();
 }).observe($('.stage'));
 render();
-platform
+const initialFonts = platform
   .getFonts()
-  .then((list) => {
+  .then(async (list) => {
     fonts = list;
+    // The first point-text measurement uses the same face as PowerPoint.
+    await platform.loadTypeface('Yu Gothic', fonts);
     properties();
     loadFonts();
   })
@@ -2173,7 +2700,7 @@ platform
   .then(async () => {
     busy = true;
     try {
-      await newDocument();
+      await Promise.all([newDocument(), initialFonts]);
     } catch (err) {
       await fail(err);
     } finally {

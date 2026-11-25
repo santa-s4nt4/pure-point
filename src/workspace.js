@@ -9,6 +9,7 @@ export function workspace(action) {
     ['text', 'Text (T)'],
     ['rect', 'Rectangle (R)'],
     ['ellipse', 'Ellipse (O)'],
+    ['line', 'Line (L)'],
     ['image', 'Insert image…'],
     ['video', 'Insert video…'],
     ['embed', 'Embed YouTube or Vimeo…'],
@@ -28,7 +29,7 @@ export function workspace(action) {
       <div class="floating-tools" role="toolbar" aria-label="Canvas tools">${tools.map(([id, label]) => action('tool-' + id, label, id, 'tool')).join('')}<i class="divider"></i>${action('gridVisible', 'Layout grid (G)', 'grid', 'tool')}</div>
       <div class="sorter" aria-label="Slide overview" hidden></div>
     </section>
-    <aside class="inspector" aria-label="Inspector"><div class="inspect-tabs"><button class="tab active" data-action="design">Design</button><button class="tab" data-action="layers">Layers</button><button class="tab" data-action="comments">Comments</button></div><div id="properties"></div></aside>
+    <aside class="inspector" aria-label="Inspector"><div class="inspect-tabs"><button class="tab active" data-action="design">Design</button><button class="tab" data-action="slides">Slides</button><button class="tab" data-action="layers">Layers</button><button class="tab" data-action="comments">Comments</button></div><div id="properties"></div></aside>
   </main><footer class="footer"><div class="foot-left"><i class="status-dot"></i><span id="status"></span></div><div class="foot-right"><span id="slide-counter"></span><i class="divider"></i>${action('canvasView', 'Slide view', 'slide')}${action('overview', 'Slide overview', 'overview')}${action('inspector', 'Toggle inspector', 'panel')}<i class="divider"></i>${action('zoomOut', 'Zoom out', 'minus')}<select id="zoom" aria-label="Zoom"><option value="fit">Fit</option><option value="custom" hidden></option>${zoomStops.map((v) => `<option value="${v}">${Math.round(v * 100)}%</option>`).join('')}</select>${action('zoomIn', 'Zoom in', 'plus')}${action('fit', 'Zoom to fit', 'fit')}</div></footer>`;
 }
 
