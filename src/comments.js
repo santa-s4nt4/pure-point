@@ -3,7 +3,17 @@ import { uid } from './model.js';
 export function renderComments(
   container,
   slide,
-  { add, remove, focusPin, setPinMode, pinning, draft, onDraft }
+  {
+    add,
+    remove,
+    focusPin,
+    setPinMode,
+    pinning,
+    draft,
+    onDraft,
+    targetName,
+    nameFor,
+  }
 ) {
   container.replaceChildren();
   const section = el('section', 'section comments-panel'),
@@ -47,7 +57,14 @@ export function renderComments(
     const body = el('p');
     body.textContent = c.text;
     top.append(jump, author, date, del);
-    card.append(top, body);
+    card.append(top);
+    const target = nameFor?.(c.objectId);
+    if (target) {
+      const label = el('span', 'comment-target');
+      label.textContent = target;
+      card.append(label);
+    }
+    card.append(body);
     section.append(card);
   });
   const form = el('form', 'comment-form'),
@@ -64,6 +81,11 @@ export function renderComments(
   const button = el('button', 'top-action primary');
   button.textContent = 'Post';
   button.type = 'submit';
+  if (targetName) {
+    const label = el('span', 'comment-target');
+    label.textContent = 'Comment on ' + targetName;
+    form.append(label);
+  }
   form.append(input, button);
   form.onsubmit = (e) => {
     e.preventDefault();

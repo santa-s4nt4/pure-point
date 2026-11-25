@@ -300,6 +300,7 @@ function patchOriginal(n, o, old, reparented = false) {
 export function exportDeck(deck, base, assets = {}) {
   const source = base?.parts || template(),
     xml = source.xml;
+  const commentNodes = new Map();
   const changes = { xml: base ? {} : { ...xml }, media: {} };
   const presPath = base?.presPath || 'ppt/presentation.xml',
     dir = presPath.slice(0, presPath.lastIndexOf('/') + 1);
@@ -413,7 +414,10 @@ export function exportDeck(deck, base, assets = {}) {
         patchOriginal(node, o, initial, reparented);
         if (o.kind === 'image' || o.kind === 'video')
           pictures.patch(node, o, initial);
-      }
+      },
+      s.comments?.some((c) => c.objectId)
+        ? (o, node) => commentNodes.set(o.id, node)
+        : null
     );
     pictures.finish(detachedMedia);
     changes.xml[path] = serialize(doc);
@@ -502,7 +506,7 @@ export function exportDeck(deck, base, assets = {}) {
   if (discardUnlinkedMedia(xml, changes, types, detachedMedia))
     typesChanged = true;
   if (typesChanged) changes.xml['[Content_Types].xml'] = serialize(types);
-  writeDocumentMetadata(deck, base, changes, xml, presPath);
+  writeDocumentMetadata(deck, base, changes, xml, presPath, commentNodes);
   if (
     xml[presPath].includes('http://purl.oclc.org/ooxml/presentationml/main')
   ) {

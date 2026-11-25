@@ -57,7 +57,7 @@ export function groupXML(o, id) {
 // Reparent the original XML element, including extension lists, object IDs,
 // chart relationships and animations attached by PowerPoint. Only recreate
 // objects inserted by the editor. source is relative to the original parent.
-export function syncLayerTree(tree, original, edited, create, patch) {
+export function syncLayerTree(tree, original, edited, create, patch, visit) {
   const known = new Map(),
     nodes = new Set(),
     retained = new Set();
@@ -77,6 +77,7 @@ export function syncLayerTree(tree, original, edited, create, patch) {
       const node = prior?.node || create(o);
       nodes.add(node);
       retained.add(node);
+      visit?.(o, node);
       if (
         prior &&
         (prior.parent !== parent ||

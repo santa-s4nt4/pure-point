@@ -1,3 +1,5 @@
+import { readCommentAnchor, writeCommentAnchor } from './comment-anchors.js';
+import { layerEntries } from './layers.js';
 import {
   A,
   P,
@@ -102,6 +104,7 @@ export function readDocumentMetadata(deck, xml, presPath, doc) {
       attr(doc(s.source).documentElement, 'show')
     );
     s.comments = [];
+    let byOfficeId;
     for (const path of commentParts(xml, s.source)) {
       if (!xml[path]) continue;
       const cm = doc(path).documentElement,
@@ -109,7 +112,7 @@ export function readDocumentMetadata(deck, xml, presPath, doc) {
         units = modern ? 12700 : 8;
       for (const n of children(cm, 'cm')) {
         const pos = child(n, 'pos');
-        s.comments.push({
+        const comment = {
           id: commentKey(n, modern),
           author: authors.get(attr(n, 'authorId')) || 'Unknown',
           text: modern
@@ -119,7 +122,17 @@ export function readDocumentMetadata(deck, xml, presPath, doc) {
           y: Number(attr(pos, 'y', 0)) / units,
           createdAt: attr(n, modern ? 'created' : 'dt'),
           sourcePart: path,
-        });
+        };
+        if (modern && child(n, 'deMkLst')) {
+          byOfficeId ??= new Map(
+            [...layerEntries(s.items).values()].map((e) => [
+              e.object.officeId,
+              e,
+            ])
+          );
+          readCommentAnchor(n, byOfficeId, comment);
+        }
+        s.comments.push(comment);
       }
     }
   }
@@ -199,17 +212,24 @@ function writeReview(state, slide, previous, path) {
     const owner =
       comment.sourcePart && paths.includes(comment.sourcePart)
         ? comment.sourcePart
-        : defaultPath || '';
+        : comment.objectId
+          ? paths.find(
+              (p) =>
+                xml[p] && parse(xml[p]).documentElement.namespaceURI === MODERN
+            ) || 'new-modern'
+          : defaultPath || (modernByDefault ? 'new-modern' : '');
     if (!grouped.has(owner)) grouped.set(owner, []);
     grouped.get(owner).push(comment);
   }
   for (const [existing, comments] of grouped) {
     const oldComments = old.filter((c) => c.sourcePart === existing);
     if (equivalent(oldComments, comments)) continue;
-    const modern = existing
-      ? parse(xml[existing]).documentElement.namespaceURI === MODERN
-      : modernByDefault;
-    let commentPath = existing;
+    const modern =
+      existing === 'new-modern' ||
+      (existing
+        ? parse(xml[existing]).documentElement.namespaceURI === MODERN
+        : modernByDefault);
+    let commentPath = existing === 'new-modern' ? '' : existing;
     if (!commentPath) {
       const dir =
         presPath.slice(0, presPath.lastIndexOf('/') + 1) + 'comments/';
@@ -332,7 +352,6 @@ function writeReview(state, slide, previous, path) {
             authorId: attr(author, 'id'),
             created: c.createdAt,
           });
-          append(node, MODERN, 'p188:unknownAnchor');
         } else {
           const idx = Number(attr(author, 'lastIdx', 0)) + 1;
           author.setAttribute('lastIdx', idx);
@@ -343,7 +362,18 @@ function writeReview(state, slide, previous, path) {
           });
         }
       }
-      if (!prior || prior.x !== c.x || prior.y !== c.y) {
+      if (modern && (!prior || prior.objectId !== c.objectId))
+        writeCommentAnchor(
+          node,
+          state.commentNodes.get(c.objectId),
+          state.slideId
+        );
+      if (
+        !prior ||
+        prior.x !== c.x ||
+        prior.y !== c.y ||
+        prior.objectId !== c.objectId
+      ) {
         const pos =
           child(node, 'pos') ||
           append(node, modern ? MODERN : P, modern ? 'p188:pos' : 'p:pos');
@@ -356,8 +386,14 @@ function writeReview(state, slide, previous, path) {
               null
           );
         const units = modern ? 12700 : 8;
-        pos.setAttribute('x', Math.round((c.x || 0) * units));
-        pos.setAttribute('y', Math.round((c.y || 0) * units));
+        pos.setAttribute(
+          'x',
+          Math.round(((modern && c.objectId ? c.offsetX : c.x) || 0) * units)
+        );
+        pos.setAttribute(
+          'y',
+          Math.round(((modern && c.objectId ? c.offsetY : c.y) || 0) * units)
+        );
       }
       if (!prior || prior.text !== c.text) setText(node, modern, c.text);
     }
@@ -366,7 +402,14 @@ function writeReview(state, slide, previous, path) {
 
 // Apply metadata after slide allocation/reordering so section references always
 // point to the actual PowerPoint slide IDs, including newly created slides.
-export function writeDocumentMetadata(deck, base, changes, source, presPath) {
+export function writeDocumentMetadata(
+  deck,
+  base,
+  changes,
+  source,
+  presPath,
+  commentNodes
+) {
   const xml = { ...source, ...changes.xml },
     docs = new Map();
   const part = (path, empty) => {
@@ -410,7 +453,16 @@ export function writeDocumentMetadata(deck, base, changes, source, presPath) {
       else root.removeAttribute('show');
     }
     writeReview(
-      { xml, docs, part, types, ensureType, presPath },
+      {
+        xml,
+        docs,
+        part,
+        types,
+        ensureType,
+        presPath,
+        commentNodes,
+        slideId: slideIds.get(slide.id),
+      },
       slide,
       old,
       path

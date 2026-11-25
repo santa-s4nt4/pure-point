@@ -213,6 +213,7 @@ function readShape(n, ctx, index, layer, master) {
     points(ext, 'cy'),
     {
       source: index,
+      officeId: attr(info, 'id'),
       ...readLayerFlags(n),
       rotation: Number(attr(xfrm, 'rot', 0)) / 60000,
       flipH: ['1', 'true'].includes(attr(xfrm, 'flipH')),
