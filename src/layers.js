@@ -149,6 +149,35 @@ function wrapTransform(group, child) {
   });
 }
 
+// Clipboard roots use slide coordinates so they can be pasted on any slide.
+// Keep a group wrapper when nested transforms introduce shear.
+export function copiesOnSlide(items, selectedIds, prepare) {
+  const ids = new Set(selectedIds);
+  const entries = independentEntries(
+    [...layerEntries(items).values()].filter((entry) =>
+      ids.has(entry.object.id)
+    )
+  );
+  function detach(o) {
+    prepare?.(o);
+    delete o.source;
+    delete o.officeId;
+    delete o.placeholder;
+    delete o.layoutOriginal;
+    o.items?.forEach(detach);
+  }
+  return entries.map((entry) => {
+    let copy = structuredClone(entry.object);
+    detach(copy);
+    if (entry.parent && !changeParent(copy, entry.transform)) {
+      for (let parent = entry.parent; parent; parent = parent.parent)
+        copy = wrapTransform(parent.object, copy);
+    }
+    if (entry.hidden) copy.hidden = true;
+    return copy;
+  });
+}
+
 export function makeGroup(entries) {
   if (entries.length < 2 || entries.some((e) => e.locked)) return null;
   const paths = entries.map(ancestry);

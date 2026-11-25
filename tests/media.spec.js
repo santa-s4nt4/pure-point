@@ -158,3 +158,83 @@ test('double-clicking an imported image replaces its source and retains its fram
     'replacement.png'
   );
 });
+
+test('Copying grouped media retains the movie until the last document closes and reuses matching PPTX parts', async ({
+  page,
+}) => {
+  await page.route('**/clipboard-fixture', (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><html lang="en"></html>',
+    })
+  );
+  await page.goto('/clipboard-fixture');
+  const result = await page.evaluate(async () => {
+    const released = [];
+    window.isTauri = true;
+    window.__TAURI_INTERNALS__ = {
+      invoke: (cmd, { tokens }) => {
+        if (cmd === 'release_movies') released.push(...tokens);
+        return Promise.resolve();
+      },
+    };
+    const {
+      captureClipboardMedia: capture,
+      pasteClipboardMedia: paste,
+      releaseClipboardMedia: discard,
+    } = await import('/src/clipboard-media.js');
+    const { releaseMovies } = await import('/src/platform.js');
+    const picture = 'ppt/media/image1.png',
+      movie = 'ppt/media/movie1.mp4';
+    const source = {
+      [picture]: 'data:image/png;base64,YQ==',
+      [movie]: {
+        token: 'fixture',
+        url: 'http://127.0.0.1/fixture',
+        mime: 'video/mp4',
+      },
+    };
+    const destination = { [picture]: 'data:image/png;base64,Yg==' };
+    const items = [
+      {
+        kind: 'group',
+        items: [
+          { kind: 'image', asset: picture },
+          { kind: 'video', poster: picture, asset: movie },
+        ],
+      },
+    ];
+    const clip = capture(items, source);
+    const same = structuredClone(items);
+    paste(same, clip, source);
+    await releaseMovies(Object.values(source));
+    const copies = [];
+    for (let i = 0; i < 20; i++) {
+      const copy = structuredClone(items);
+      paste(copy, clip, destination);
+      copies.push(copy[0].items);
+    }
+    await discard(clip);
+    await discard(clip);
+    const beforeClose = [...released];
+    await releaseMovies(Object.values(destination));
+    return {
+      same: same[0].items[1].asset === movie,
+      paths: Object.keys(destination).length,
+      movies: new Set(copies.map((a) => a[1].asset)).size,
+      noCollision: copies.every(
+        (a) => a[0].asset !== picture && a[1].poster === a[0].asset
+      ),
+      beforeClose,
+      released,
+    };
+  });
+  expect(result).toEqual({
+    same: true,
+    paths: 3,
+    movies: 1,
+    noCollision: true,
+    beforeClose: [],
+    released: ['fixture'],
+  });
+});

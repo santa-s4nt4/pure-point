@@ -19,6 +19,8 @@ import {
   Type,
   Square,
   Circle,
+  Copy,
+  ClipboardPaste,
   ImagePlus,
   Undo2,
   Redo2,
@@ -69,6 +71,8 @@ import { videoNode } from './media-player.js';
 import { tableNode } from './table.js';
 import { gridLines } from './grid.js';
 const icons = {
+  copy: Copy,
+  paste: ClipboardPaste,
   pointer: MousePointer2,
   line: Slash,
   objectleft: AlignStartVertical,

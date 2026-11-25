@@ -18,6 +18,12 @@ import {
   reorderLayers,
 } from './arrange.js';
 import { chooseColor } from './color-dialog.js';
+import { objectClipboard } from './object-clipboard.js';
+import {
+  captureClipboardMedia,
+  pasteClipboardMedia,
+} from './clipboard-media.js';
+import { captureOfficeObject, validateOfficeCopies } from './office-copy.js';
 import './style.css';
 import { createMediaEditor } from './media-editor.js';
 import './workspace.css';
@@ -38,6 +44,7 @@ import {
   layerBounds,
   selectionBounds,
   independentEntries,
+  copiesOnSlide,
   localDelta,
   makeGroup,
   ungroup,
@@ -989,6 +996,57 @@ function addObject(o) {
     tool = 'pointer';
   });
 }
+const clipboard = objectClipboard({
+  available: (target) =>
+    !busy &&
+    !present &&
+    !overview &&
+    !editor &&
+    !drag &&
+    !document.querySelector('dialog[open]') &&
+    !target?.closest?.('input,textarea,select,[contenteditable="true"]'),
+  capture() {
+    const slide = active();
+    const items = copiesOnSlide(slide.items, selectedIds(), (o) =>
+      captureOfficeObject(o, slide, base)
+    );
+    if (!items.length) return null;
+    return {
+      items,
+      media: captureClipboardMedia(items, assets),
+      from: active().id,
+    };
+  },
+  insert(clip) {
+    validateOfficeCopies(clip.items, base);
+    const items = structuredClone(clip.items);
+    const offset =
+      clip.lastSlide === active().id
+        ? clip.offset + 12
+        : clip.from === active().id
+          ? 12
+          : 0;
+    function identify(o) {
+      o.id = uid();
+      o.items?.forEach(identify);
+    }
+    for (const o of items) {
+      identify(o);
+      o.x += offset;
+      o.y += offset;
+    }
+    pasteClipboardMedia(items, clip.media, assets);
+    change(() => {
+      active().items.push(...items);
+      pickedSlides.clear();
+      setSelection(items.map((o) => o.id));
+      tool = 'pointer';
+    });
+    clip.lastSlide = active().id;
+    clip.offset = offset;
+  },
+  onError: fail,
+});
 const mediaEditor = createMediaEditor({
   getDeck: () => deck,
   getSlide: active,
@@ -1465,6 +1523,7 @@ function objectMenu(e) {
   if (entries.some((entry) => !entry.locked && entry.object.kind === 'group'))
     rows.push(['ungroup', 'Ungroup', 'ungroup', '⇧⌘G']);
   if (entries.length) {
+    rows.push(['copyObjects', 'Copy', 'copy', '⌘C']);
     if (reorderLayers(entries, null, 'front'))
       rows.push(['front', 'Bring to front', 'layers']);
     if (reorderLayers(entries, null, 'back'))
@@ -1480,6 +1539,7 @@ function objectMenu(e) {
       'lock',
     ]);
   }
+  if (clipboard.hasObjects) rows.push(['pasteObjects', 'Paste', 'paste', '⌘V']);
   rows.push(['selectionComment', 'Add comment…', 'comment']);
   if (entries.some((entry) => !entry.locked))
     rows.push(['delete', 'Delete', 'delete']);
@@ -1625,6 +1685,8 @@ async function execute(id, button) {
     return;
   }
   if (!['fileMenu', 'slideMenu'].includes(id)) $('.menu')?.remove();
+  if (id === 'copyObjects') return clipboard.copy();
+  if (id === 'pasteObjects') return clipboard.paste();
   if (id === 'overview' || id === 'canvasView') {
     setOverview(id === 'overview' ? !overview : false);
     return;

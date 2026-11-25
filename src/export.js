@@ -1,3 +1,4 @@
+import { writeOfficeCopy } from './office-copy.js';
 import { layoutPatches, placeholderShape } from './slide-layouts.js';
 import {
   geometryXML,
@@ -490,6 +491,19 @@ export function exportDeck(deck, base, assets = {}) {
       s.items,
       (o) => {
         id++;
+        if (o.officeCopy)
+          return writeOfficeCopy(o, {
+            doc,
+            path,
+            sr,
+            base,
+            id,
+            nextId: () => ++id,
+            patch: patchOriginal,
+            onRelationsChanged: () => {
+              relChanged = true;
+            },
+          });
         if (o.placeholder && o.layoutOriginal) {
           const node = fragment(doc, placeholderShape(o, id));
           patchOriginal(node, o, o.layoutOriginal);

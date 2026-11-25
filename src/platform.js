@@ -69,10 +69,28 @@ export async function savePackage(base, path, name, changes) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   return a.download;
 }
+// Native registration gives the source document one ownership. A clipboard
+// capture and each destination document can acquire another share of its file.
+const additionalMovieOwners = new Map();
+function movieTokens(values) {
+  return new Set(values.map((value) => value?.token).filter(Boolean));
+}
+export function retainMovies(values) {
+  for (const token of movieTokens(values)) {
+    additionalMovieOwners.set(
+      token,
+      (additionalMovieOwners.get(token) || 0) + 1
+    );
+  }
+}
 export function releaseMovies(values) {
-  const tokens = [
-    ...new Set(values.map((value) => value?.token).filter(Boolean)),
-  ];
+  const tokens = [];
+  for (const token of movieTokens(values)) {
+    const shares = additionalMovieOwners.get(token);
+    if (shares === undefined) tokens.push(token);
+    else if (shares === 1) additionalMovieOwners.delete(token);
+    else additionalMovieOwners.set(token, shares - 1);
+  }
   return native && tokens.length
     ? invoke('release_movies', { tokens })
     : Promise.resolve();
