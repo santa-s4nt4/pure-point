@@ -31,7 +31,10 @@ test('編集、グリッドへの吸着、PPTXへの保存と再読み込み', a
     box = await art.boundingBox(),
     scale = box.width / 960;
   await page.locator('[data-action="tool-rect"]').click();
-  await art.click({ position: { x: 110 * scale, y: 95 * scale } });
+  await page.mouse.move(box.x + 110 * scale, box.y + 95 * scale);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 230 * scale, box.y + 195 * scale, { steps: 4 });
+  await page.mouse.up();
   const shape = art.locator('[data-id]').last(),
     rect = await shape.boundingBox();
   await page.mouse.move(rect.x + 10, rect.y + 10);
@@ -56,7 +59,8 @@ test('編集、グリッドへの吸着、PPTXへの保存と再読み込み', a
   await art.locator('[data-id]').last().dblclick();
   await expect(text).toBeVisible();
   await text.press('Escape');
-  await page.locator('[data-action="addSlide"]').click();
+  await page.locator('.rail [data-action="addSlide"]').click();
+  await page.getByRole('button', { name: 'タイトルのみ', exact: true }).click();
   await expect(page.locator('.select-slide')).toHaveCount(2);
   await menuAction(page, 'undo');
   await expect(page.locator('.select-slide')).toHaveCount(1);
@@ -74,8 +78,10 @@ test('編集、グリッドへの吸着、PPTXへの保存と再読み込み', a
 
 test('元部品の保持とスライドの並び替え・削除', async ({ page }, info) => {
   await page.goto('/');
-  await page.locator('[data-action="addSlide"]').click();
-  await page.locator('[data-action="addSlide"]').click();
+  await page.locator('.rail [data-action="addSlide"]').click();
+  await page.getByRole('button', { name: 'タイトルのみ', exact: true }).click();
+  await page.locator('.rail [data-action="addSlide"]').click();
+  await page.getByRole('button', { name: 'タイトルのみ', exact: true }).click();
   const original = info.outputPath('source.pptx');
   await download(page, original);
   await openFixture(page, original);

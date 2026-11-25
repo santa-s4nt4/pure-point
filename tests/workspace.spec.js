@@ -29,8 +29,12 @@ test('Navigator, slide sections, hidden slides, and comments survive reopening',
   await page.mouse.move(bar.x + 65, bar.y + 100);
   await page.mouse.up();
   expect((await rail.boundingBox()).width).toBeGreaterThan(original.width + 50);
-  for (let i = 0; i < 4; i++)
+  for (let i = 0; i < 4; i++) {
     await rail.locator('[data-action=addSlide]').click();
+    await page
+      .getByRole('button', { name: 'タイトルのみ', exact: true })
+      .click();
+  }
   await rail.locator('[data-slide="1"]').click();
   await page.keyboard.press('ArrowDown');
   await expect(page.locator('#slide-counter')).toHaveText('Slide 3 / 5');
@@ -63,16 +67,14 @@ test('Navigator, slide sections, hidden slides, and comments survive reopening',
   const before = (
     await page.locator('.sorter .thumb-frame').first().boundingBox()
   ).width;
-  await page
-    .locator('.sorter')
-    .dispatchEvent('wheel', {
-      deltaY: -70,
-      ctrlKey: true,
-      bubbles: true,
-      cancelable: true,
-      clientX: 620,
-      clientY: 220,
-    });
+  await page.locator('.sorter').dispatchEvent('wheel', {
+    deltaY: -70,
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+    clientX: 620,
+    clientY: 220,
+  });
   expect(
     (await page.locator('.sorter .thumb-frame').first().boundingBox()).width
   ).toBeGreaterThan(before);

@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './tests',
+  preserveOutput: 'never',
   workers: 1,
   use: {
     channel: 'chrome',
