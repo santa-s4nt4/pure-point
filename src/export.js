@@ -29,6 +29,7 @@ import {
   relfile,
   rels,
   rid,
+  rgbColor,
   serialize,
   solid,
 } from './xml.js';
@@ -42,10 +43,11 @@ const align = (s) =>
   ({ left: 'l', right: 'r', center: 'ctr', justify: 'just' })[s] || 'l';
 const typefaces = (o) =>
   ['latin', 'ea', 'cs']
-    .map(
-      (s) =>
-        `<a:${s} typeface="${esc(s === 'ea' ? o.eastAsianFont || o.font : o.font)}"/>`
-    )
+    .map((s) => {
+      const font = s === 'ea' ? o.eastAsianFont || o.font : o.font;
+      const charset = s === 'ea' ? o.eastAsianCharset : o.fontCharset;
+      return `<a:${s} typeface="${esc(font)}"${charset ? ` charset="${esc(charset)}"` : ''}/>`;
+    })
     .join('');
 function lineSpacingXml(value) {
   return typeof value === 'string'
@@ -66,27 +68,36 @@ function textBody(o) {
   }
   paragraphs ??= o.text.split('\n').map((text) => ({ runs: [{ ...o, text }] }));
   const runProps = (style) =>
-    `lang="ja-JP" spc="${Math.round((style.letterSpacing || 0) * 100)}" sz="${Math.round(style.size * 100)}" b="${Number(Boolean(style.bold))}" i="${Number(Boolean(style.italic))}"`;
+    `lang="${esc(style.lang || 'ja-JP')}"` +
+    (style.altLang ? ` altLang="${esc(style.altLang)}"` : '') +
+    (style.kern != null ? ` kern="${Math.round(style.kern * 100)}"` : '') +
+    (style.underline ? ` u="${esc(style.underline)}"` : '') +
+    ` spc="${Math.round((style.letterSpacing || 0) * 100)}" sz="${Math.round(style.size * 100)}" b="${Number(Boolean(style.bold))}" i="${Number(Boolean(style.italic))}"`;
+  const runPaint = (style) =>
+    solid(style.color) +
+    (style.highlight
+      ? `<a:highlight>${rgbColor(style.highlight)}</a:highlight>`
+      : '');
   const runs = paragraphs
     .map((p) => {
       const style = p.base || o;
       const bullet = p.bullet
         ? `<a:buChar char="${esc(p.bullet)}"/>`
         : '<a:buNone/>';
-      const props = `<a:pPr algn="${align(p.align || o.align)}" marL="${emu(p.margin || 0)}" indent="${emu(p.indent || 0)}"><a:lnSpc>${lineSpacingXml(p.lineHeight ?? o.lineHeight)}</a:lnSpc><a:spcBef><a:spcPts val="${Math.round((p.before || 0) * 100)}"/></a:spcBef><a:spcAft><a:spcPts val="${Math.round((p.after || 0) * 100)}"/></a:spcAft>${bullet}</a:pPr>`;
+      const props = `<a:pPr algn="${align(p.align || o.align)}" marL="${emu(p.margin || 0)}" marR="${emu(p.marginRight || 0)}" indent="${emu(p.indent || 0)}"><a:lnSpc>${lineSpacingXml(p.lineHeight ?? o.lineHeight)}</a:lnSpc><a:spcBef><a:spcPts val="${Math.round((p.before || 0) * 100)}"/></a:spcBef><a:spcAft><a:spcPts val="${Math.round((p.after || 0) * 100)}"/></a:spcAft>${bullet}</a:pPr>`;
       const text = p.runs
         .map((run) => {
-          const attrs = `<a:rPr ${runProps(run)}>${solid(run.color)}${typefaces(run)}</a:rPr>`;
+          const attrs = `<a:rPr ${runProps(run)}>${runPaint(run)}${typefaces(run)}</a:rPr>`;
           return run.text
             .split('\n')
             .map((line) => `<a:r>${attrs}<a:t>${esc(line)}</a:t></a:r>`)
             .join(`<a:br>${attrs}</a:br>`);
         })
         .join('');
-      return `<a:p>${props}${text}<a:endParaRPr ${runProps(style)}>${solid(style.color)}${typefaces(style)}</a:endParaRPr></a:p>`;
+      return `<a:p>${props}${text}<a:endParaRPr ${runProps(style)}>${runPaint(style)}${typefaces(style)}</a:endParaRPr></a:p>`;
     })
     .join('');
-  return `<p:txBody><a:bodyPr wrap="${o.autoWidth ? 'none' : 'square'}" lIns="${l}" tIns="${t}" rIns="${r}" bIns="${b}" anchor="${{ middle: 'ctr', bottom: 'b' }[o.valign] || 't'}">${o.autoWidth ? '<a:spAutoFit/>' : '<a:noAutofit/>'}</a:bodyPr><a:lstStyle/>${runs}</p:txBody>`;
+  return `<p:txBody><a:bodyPr wrap="${o.autoWidth || o.noWrap ? 'none' : 'square'}"${o.spaceAtEdges ? ' spcFirstLastPara="1"' : ''} lIns="${l}" tIns="${t}" rIns="${r}" bIns="${b}" anchor="${{ middle: 'ctr', bottom: 'b' }[o.valign] || 't'}">${o.autoWidth ? '<a:spAutoFit/>' : '<a:noAutofit/>'}</a:bodyPr><a:lstStyle/>${runs}</p:txBody>`;
 }
 function shapeXML(o, id) {
   if (o.kind === 'line') return connectorXML(o, id, xfrm(o));
@@ -207,12 +218,20 @@ function patchOriginal(n, o, old, reparented = false) {
         const prior =
           old.paragraphs?.[i]?.runs.map((r) => r.text).join('') ?? '';
         if (line === prior) return;
-        if (!runs.length && o.placeholder) {
-          // Inherit placeholder layout and list style, including themed fonts.
-          p.insertBefore(
-            fragment(doc, '<a:r><a:t>' + esc(line) + '</a:t></a:r>'),
-            child(p, 'endParaRPr') || null
-          );
+        if (!runs.length && !line.includes('\n')) {
+          const run = fragment(doc, '<a:r><a:t>' + esc(line) + '</a:t></a:r>');
+          const end = child(p, 'endParaRPr');
+          if (end) {
+            // PowerPoint uses the paragraph mark's character style when typing
+            // the first character. Preserve original theme references here.
+            const props = doc.createElementNS(A, 'a:rPr');
+            for (const a of end.attributes)
+              props.setAttributeNS(a.namespaceURI, a.name, a.value);
+            for (const c of end.childNodes)
+              props.appendChild(c.cloneNode(true));
+            run.insertBefore(props, run.firstChild);
+          }
+          p.insertBefore(run, end || null);
           return;
         }
         if (!runs.length || runs.some((r) => r.localName === 'br')) {
@@ -220,10 +239,14 @@ function patchOriginal(n, o, old, reparented = false) {
           return;
         }
         const texts = runs.map((run) => child(run, 't')).filter(Boolean);
-        const values = replaceRunText(
-          texts.map((t) => t.textContent),
-          line
-        );
+        const authored = o.paragraphs?.[i]?.runs.map((r) => r.text);
+        const values =
+          authored?.length === texts.length && authored.join('') === line
+            ? authored
+            : replaceRunText(
+                texts.map((t) => t.textContent),
+                line
+              );
         texts.forEach((t, j) => {
           t.textContent = values[j];
         });
@@ -241,7 +264,7 @@ function patchOriginal(n, o, old, reparented = false) {
   }
   if (Boolean(o.autoWidth) !== Boolean(old.autoWidth)) {
     const props = ensure(tb, A, 'a:bodyPr', tb.firstElementChild);
-    props.setAttribute('wrap', o.autoWidth ? 'none' : 'square');
+    props.setAttribute('wrap', o.autoWidth || o.noWrap ? 'none' : 'square');
     const target = fragment(
       doc,
       o.autoWidth ? '<a:spAutoFit/>' : '<a:noAutofit/>'
@@ -291,6 +314,8 @@ function patchOriginal(n, o, old, reparented = false) {
       }
       if (newPlaceholderParagraph || current.margin !== prior.margin)
         ppr().setAttribute('marL', emu(current.margin || 0));
+      if (current.marginRight !== prior.marginRight)
+        ppr().setAttribute('marR', emu(current.marginRight || 0));
       if (newPlaceholderParagraph || current.indent !== prior.indent)
         ppr().setAttribute('indent', emu(current.indent || 0));
       for (const [key, element] of [
@@ -338,9 +363,15 @@ function patchOriginal(n, o, old, reparented = false) {
           ))
       );
     if (
-      !['size', 'font', 'bold', 'italic', 'color', 'letterSpacing'].some(
-        styleChanged
-      )
+      ![
+        'size',
+        'font',
+        'eastAsianFont',
+        'bold',
+        'italic',
+        'color',
+        'letterSpacing',
+      ].some(styleChanged)
     )
       continue;
     const ppr = ensure(p, A, 'a:pPr', p.firstElementChild);
@@ -378,7 +409,7 @@ function patchOriginal(n, o, old, reparented = false) {
               ].includes(el.localName)
           )
         );
-      if (styleChanged('font')) {
+      if (styleChanged('font') || styleChanged('eastAsianFont')) {
         const order = [
           'latin',
           'ea',
@@ -389,18 +420,27 @@ function patchOriginal(n, o, old, reparented = false) {
           'rtl',
           'extLst',
         ];
-        for (const f of order.slice(0, 3))
-          ensure(
+        for (const f of order.slice(0, 3)) {
+          const face = ensure(
             rp,
             A,
             'a:' + f,
             children(rp).find(
               (el) => order.indexOf(el.localName) > order.indexOf(f)
             )
-          ).setAttribute(
-            'typeface',
-            f === 'ea' ? style.eastAsianFont || style.font : style.font
           );
+          const name =
+            f === 'ea' ? style.eastAsianFont || style.font : style.font;
+          if (attr(face, 'typeface') !== name) {
+            face.removeAttribute('panose');
+            face.removeAttribute('pitchFamily');
+          }
+          face.setAttribute('typeface', name);
+          const charset =
+            f === 'ea' ? style.eastAsianCharset : style.fontCharset;
+          if (charset) face.setAttribute('charset', charset);
+          else face.removeAttribute('charset');
+        }
       }
     }
   }

@@ -1,4 +1,5 @@
 import { attr, child, children } from './xml.js';
+import { appendTextRun } from './text-runs.js';
 export function readTable(table, theme, readColor, readStyle) {
   const cols = children(child(table, 'tblGrid'), 'gridCol').map((c) =>
     Number(attr(c, 'w', 1))
@@ -15,6 +16,7 @@ export function readTable(table, theme, readColor, readStyle) {
           child(pp, 'defRPr'),
           {
             font: theme.minor,
+            eastAsianFont: theme.minorEA,
             size: 16,
             bold: false,
             italic: false,
@@ -74,12 +76,7 @@ export function tableNode(o, typeStyle, el) {
       for (const p of c.paragraphs) {
         const line = el('div');
         line.style.textAlign = p.align;
-        for (const run of p.runs) {
-          const span = el('span');
-          typeStyle(span, run);
-          span.textContent = run.text;
-          line.append(span);
-        }
+        for (const run of p.runs) appendTextRun(line, run, typeStyle);
         cell.append(line);
       }
       n.append(cell);

@@ -417,6 +417,15 @@ svg {
   line-height: 1.16;
   pointer-events: none;
 }
+.item-text > div,
+.item-text li {
+  position: relative;
+  top: var(--line-offset, 0px);
+  min-height: var(--minimum-line, 1lh);
+}
+.item-text > div:last-child {
+  margin-bottom: calc(0px - var(--line-offset, 0px));
+}
 .group-content {
   position: absolute;
   inset: 0;

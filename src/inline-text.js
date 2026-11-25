@@ -1,48 +1,99 @@
 import { editableParagraphs, applyParagraphs, convertDash } from './bullets.js';
-import { singleLine } from './text.js';
-// Activate the actual rendered glyphs rather than painting an input over them.
-// Using the canvas DOM also preserves nested group transforms and native IME.
+// Keep native selection and IME on the glyphs in the transformed slide.
+function linesOf(input) {
+  const lines = [...input.querySelectorAll('div,p,li')].filter(
+    (line) => !line.querySelector('div,p,li')
+  );
+  return lines.length ? lines : [input];
+}
+
+function textNodes(line) {
+  const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) {
+    if (walker.currentNode.length) nodes.push(walker.currentNode);
+  }
+  return nodes;
+}
+
+function edge(line, atEnd) {
+  const nodes = textNodes(line);
+  if (!nodes.length)
+    return [line.querySelector('span > br')?.parentElement || line, 0];
+  return atEnd ? [nodes.at(-1), nodes.at(-1).length] : [nodes[0], 0];
+}
+
 function caretAt(input, event) {
-  const selection = input.ownerDocument.getSelection();
-  const range = input.ownerDocument.createRange();
-  let candidate;
+  const doc = input.ownerDocument;
+  const selection = doc.getSelection();
   if (event) {
     const { clientX: x, clientY: y } = event;
-    const position = document.caretPositionFromPoint?.(x, y);
-    if (position && input.contains(position.offsetNode)) {
-      range.setStart(position.offsetNode, position.offset);
-      candidate = true;
-    } else {
-      const located = document.caretRangeFromPoint?.(x, y);
-      if (located && input.contains(located.startContainer)) {
-        range.setStart(located.startContainer, located.startOffset);
-        candidate = true;
-      }
+    const hit = doc.caretPositionFromPoint?.(x, y);
+    const range = hit ? null : doc.caretRangeFromPoint?.(x, y);
+    const node = hit?.offsetNode || range?.startContainer;
+    if (node?.nodeType === Node.TEXT_NODE && input.contains(node)) {
+      selection.collapse(node, hit?.offset ?? range.startOffset);
+      return;
     }
   }
-  const leaves = [...input.querySelectorAll('li,div,p')].filter(
-    (n) => !n.querySelector('div,p,li')
-  );
-  const empty = !range.startContainer.textContent || !candidate;
-  if (
-    empty ||
-    range.startContainer === input ||
-    range.startContainer.tagName === 'UL'
-  ) {
-    const distance = (n) => {
-      const r = n.getBoundingClientRect();
-      return Math.max(0, r.top - event.clientY, event.clientY - r.bottom);
-    };
-    const line =
-      (event
-        ? leaves.sort((a, b) => distance(a) - distance(b))[0]
-        : leaves.at(-1)) || input;
-    range.selectNodeContents(line);
-    if (!line.textContent) range.setStart(line, 0);
-    range.collapse(!line.textContent);
-  } else range.collapse(true);
-  selection.removeAllRanges();
-  selection.addRange(range);
+  const lines = linesOf(input);
+  if (!event) {
+    selection.collapse(...edge(lines.at(-1), true));
+    return;
+  }
+  // A click in a box's padding can hit a flex container or bullet marker.
+  // Place the insertion point inside the nearest glyph run so its size and
+  // typeface apply to the caret and to the next characters the user types.
+  const distance = (line) => {
+    const r = line.getBoundingClientRect();
+    return Math.max(0, r.top - event.clientY, event.clientY - r.bottom);
+  };
+  const line = lines.reduce((a, b) => (distance(a) <= distance(b) ? a : b));
+  const first = edge(line, false);
+  const last = edge(line, true);
+  const distanceTo = ([node, offset]) => {
+    const r = doc.createRange();
+    r.setStart(node, offset);
+    r.collapse(true);
+    const rect = r.getBoundingClientRect();
+    return Math.hypot(
+      event.clientX - rect.x,
+      event.clientY - (rect.top + rect.height / 2)
+    );
+  };
+  selection.collapse(...(distanceTo(first) <= distanceTo(last) ? first : last));
+}
+
+function bookmarkPosition(lines, node, offset) {
+  let index = lines.findIndex((line) => line.contains(node));
+  if (index < 0) {
+    const after = node.childNodes[offset];
+    index = lines.findIndex((line) => after?.contains(line));
+    return index < 0
+      ? { index: lines.length - 1, offset: Infinity }
+      : { index, offset: 0 };
+  }
+  const r = document.createRange();
+  r.selectNodeContents(lines[index]);
+  r.setEnd(node, offset);
+  // A native soft break becomes a newline in a rendered text run.
+  const part = r.cloneContents();
+  return {
+    index,
+    offset: part.textContent.length + part.querySelectorAll('br').length,
+    atRunStart: offset === 0,
+  };
+}
+
+function restorePosition(lines, mark) {
+  const line = lines[Math.min(mark.index, lines.length - 1)];
+  let offset = mark.offset;
+  for (const node of textNodes(line)) {
+    if (offset < node.length || (offset === node.length && !mark.atRunStart))
+      return [node, offset];
+    offset -= node.length;
+  }
+  return edge(line, true);
 }
 
 export function inlineText({ item, object, event, finish, onInput }) {
@@ -74,17 +125,26 @@ export function inlineText({ item, object, event, finish, onInput }) {
   if (!input.firstChild) input.append(document.createElement('div'));
   if (input.firstElementChild && !input.firstElementChild.childNodes.length)
     input.firstElementChild.append(document.createElement('br'));
-  function adjust() {
-    if (!object.autoWidth) return;
-    // Intrinsic layout measures logical slide units independently of zoom.
-    input.style.right = 'auto';
-    input.style.bottom = 'auto';
-    input.style.minWidth = '2px';
+  function intrinsicSize() {
+    // Measure without changing the visible frame or its vertical alignment.
+    const width = input.style.width,
+      height = input.style.height;
     input.style.width = 'max-content';
-    input.style.height = 'auto';
-    item.style.width = Math.max(2, input.offsetWidth) + 'px';
-    item.style.height =
-      Math.max(object.size * singleLine, input.offsetHeight) + 'px';
+    input.style.height = 'max-content';
+    const style = getComputedStyle(input);
+    const size = { w: parseFloat(style.width), h: parseFloat(style.height) };
+    input.style.width = width;
+    input.style.height = height;
+    return size;
+  }
+  const initial = object.autoWidth && intrinsicSize();
+  function adjust() {
+    if (!initial || !touched) return;
+    // Office's auto-fit box can include extra space around the text. Keep its
+    // authored dimensions on entry and resize by the change caused by typing.
+    const size = intrinsicSize();
+    item.style.width = Math.max(2, object.w + size.w - initial.w) + 'px';
+    item.style.height = Math.max(1, object.h + size.h - initial.h) + 'px';
   }
   input.addEventListener(
     'beforeinput',
@@ -151,10 +211,29 @@ export function inlineText({ item, object, event, finish, onInput }) {
     },
     options
   );
+  function remember() {
+    const sel = document.getSelection();
+    if (
+      !sel.rangeCount ||
+      !input.contains(sel.anchorNode) ||
+      !input.contains(sel.focusNode)
+    )
+      return bookmark;
+    const lines = linesOf(input);
+    bookmark = [
+      bookmarkPosition(lines, sel.anchorNode, sel.anchorOffset),
+      bookmarkPosition(lines, sel.focusNode, sel.focusOffset),
+    ];
+    return bookmark;
+  }
+  document.addEventListener('selectionchange', remember, options);
   input.addEventListener(
     'blur',
     (e) => {
-      if (e.relatedTarget?.closest('#properties,dialog')) return;
+      if (e.relatedTarget?.closest('#properties,dialog')) {
+        remember();
+        return;
+      }
       if (composing) {
         deferBlur = true;
         return;
@@ -164,9 +243,6 @@ export function inlineText({ item, object, event, finish, onInput }) {
     },
     options
   );
-  const observer = new ResizeObserver(adjust);
-  if (object.autoWidth) observer.observe(input);
-  adjust();
   input.focus({ preventScroll: true });
   caretAt(input, event);
   return {
@@ -189,37 +265,16 @@ export function inlineText({ item, object, event, finish, onInput }) {
     apply() {
       if (touched) applyParagraphs(object, editableParagraphs(input, object));
     },
-    remember() {
-      const sel = document.getSelection();
-      if (!sel.rangeCount || !input.contains(sel.anchorNode)) return bookmark;
-      const start = sel.getRangeAt(0),
-        r = document.createRange();
-      r.selectNodeContents(input);
-      r.setEnd(start.startContainer, start.startOffset);
-      const a = r.toString().length;
-      r.setEnd(start.endContainer, start.endOffset);
-      bookmark = [a, r.toString().length];
-      return bookmark;
-    },
+    remember,
     restore(mark) {
       if (!mark) return;
-      const walker = document.createTreeWalker(input, NodeFilter.SHOW_TEXT);
-      const nodes = [];
-      while (walker.nextNode()) nodes.push(walker.currentNode);
-      if (!nodes.length) return;
-      function locate(index) {
-        for (const node of nodes) {
-          if (index <= node.length) return [node, index];
-          index -= node.length;
-        }
-        return [nodes.at(-1), nodes.at(-1).length];
-      }
-      const r = document.createRange();
-      r.setStart(...locate(mark[0]));
-      r.setEnd(...locate(mark[1]));
-      const sel = document.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(r);
+      const lines = linesOf(input);
+      document
+        .getSelection()
+        .setBaseAndExtent(
+          ...restorePosition(lines, mark[0]),
+          ...restorePosition(lines, mark[1])
+        );
     },
     size() {
       adjust();
@@ -232,7 +287,6 @@ export function inlineText({ item, object, event, finish, onInput }) {
       return composing;
     },
     close() {
-      observer.disconnect();
       controller.abort();
       input.removeAttribute('contenteditable');
       input.removeAttribute('role');

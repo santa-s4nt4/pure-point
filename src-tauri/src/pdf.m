@@ -62,6 +62,13 @@
         "const page=pages[index];page.hidden=false;void page.offsetHeight;"
         "for(const i of page.querySelectorAll('img[data-print-src]')) i.src=i.dataset.printSrc;"
         "await Promise.all([...page.querySelectorAll('img')].map(i=>i.decode().catch(()=>{})));"
+        // Newly visible pages can introduce another Office font. WebKit's
+        // fonts.ready may still be resolved from the previous page until paint.
+        "const fonts=new Map();const walker=document.createTreeWalker(page,NodeFilter.SHOW_TEXT);"
+        "while(walker.nextNode()){const node=walker.currentNode;if(!node.data.trim())continue;"
+        "const s=getComputedStyle(node.parentElement),key=s.fontStyle+' '+s.fontWeight+' '+s.fontSize+' '+s.fontFamily;"
+        "fonts.set(key,(fonts.get(key)||'')+node.data);}"
+        "await Promise.all([...fonts].map(([key,text])=>document.fonts.load(key,text).catch(()=>{})));"
         "await document.fonts.ready;void page.offsetHeight;return true;";
     [self.view callAsyncJavaScript:script arguments:@{@"index":@(self.index)} inFrame:nil
         inContentWorld:WKContentWorld.defaultClientWorld completionHandler:^(id __unused value, NSError *error){

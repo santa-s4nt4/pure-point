@@ -1,9 +1,49 @@
-// PowerPoint's single-spaced baseline distance is about 1.21 em. Store
+// PowerPoint advances a single-spaced line by approximately 1.2 em. Store
 // percentages as native multiples and keep exact point leading as CSS pixels
 // in the slide's one-logical-pixel-per-point coordinate system.
-export const singleLine = 1.21;
+export const singleLine = 1.2;
 export const lineBox = (value) =>
   typeof value === 'string' ? value : (value || 1) * singleLine;
+
+export function lineAdvance(value, size) {
+  const height = lineBox(value);
+  return typeof height === 'string' ? parseFloat(height) : height * size;
+}
+
+// PowerPoint puts roughly three quarters of extra line spacing above the
+// baseline. CSS splits it evenly. The last line keeps its unscaled descent,
+// which also affects the vertical position of centered and bottom anchors.
+export function leadingOffset(value, size) {
+  return (lineAdvance(value, size) - singleLine * size) / 4;
+}
+
+export function paragraphMetrics({ runs, base, lineHeight }) {
+  // An unused large master font must not enlarge the browser's implicit
+  // line box (and caret) when all visible runs are smaller.
+  let strut,
+    largest = 0,
+    lineSize = 0,
+    height = 0;
+  for (const run of runs) {
+    if (!run.text) continue;
+    if (!strut || run.size < strut.size) strut = run;
+    largest = Math.max(largest, run.size);
+    const segments = run.text.split('\n');
+    for (let i = 0; i < segments.length; i++) {
+      if (i) {
+        height += lineAdvance(lineHeight, lineSize || run.size);
+        lineSize = 0;
+      }
+      if (segments[i]) lineSize = Math.max(lineSize, run.size);
+    }
+  }
+  return {
+    strut,
+    offset: leadingOffset(lineHeight, largest || base.size),
+    minHeight:
+      height + lineAdvance(lineHeight, lineSize || strut?.size || base.size),
+  };
+}
 
 // Retain formatting and hyperlinks on the unchanged prefix and suffix of a paragraph.
 export function replaceRunText(runs, next) {

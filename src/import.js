@@ -34,6 +34,8 @@ export function relationships(xml, path) {
 }
 const points = (node, key, fallback = 0) =>
   node?.hasAttribute(key) ? Number(attr(node, key)) / 12700 : fallback;
+const percent = (value) =>
+  value.endsWith('%') ? parseFloat(value) / 100 : Number(value) / 100000;
 const first = (...values) =>
   values.find((v) => v !== undefined && v !== null && v !== '');
 function color(node, theme, fallback = null) {
@@ -50,9 +52,7 @@ function color(node, theme, fallback = null) {
   let alpha = 1;
   for (const mod of children(n)) {
     const raw = attr(mod, 'val');
-    const amount = raw.endsWith('%')
-      ? parseFloat(raw) / 100
-      : Number(raw) / 100000;
+    const amount = percent(raw);
     if (mod.localName === 'alpha') alpha = amount;
     if (mod.localName === 'alphaMod') alpha *= amount;
     if (mod.localName === 'alphaOff') alpha += amount;
@@ -102,36 +102,72 @@ function themeFor(theme, master, layout, page) {
   for (const k of ['minor', 'major']) {
     const group = desc(theme, k + 'Font');
     result[k] = attr(child(group, 'latin'), 'typeface', 'Arial');
+    result[k + 'Scripts'] = Object.fromEntries(
+      children(group, 'font').map((n) => [
+        attr(n, 'script'),
+        attr(n, 'typeface'),
+      ])
+    );
+    result[k + 'EastAsianFace'] = attr(child(group, 'ea'), 'typeface');
     result[k + 'EA'] =
-      attr(child(group, 'ea'), 'typeface') ||
-      attr(
-        children(group, 'font').find((n) => attr(n, 'script') === 'Jpan'),
-        'typeface'
-      ) ||
-      result[k];
+      result[k + 'EastAsianFace'] || result[k + 'Scripts'].Jpan || result[k];
   }
   return result;
 }
-function fontName(n, theme) {
+function eastAsianFace(theme, group, lang, altLang) {
+  const locale = [lang, altLang].find((s) => /^(?:zh|ko|ja)(?:-|$)/i.test(s));
+  if (!locale || theme[group + 'EastAsianFace']) return theme[group + 'EA'];
+  const script = /^ko/i.test(locale)
+    ? 'Hang'
+    : /^ja/i.test(locale)
+      ? 'Jpan'
+      : /(?:-Hant|-TW|-HK|-MO)(?:-|$)/i.test(locale)
+        ? 'Hant'
+        : 'Hans';
+  return theme[group + 'Scripts']?.[script] || theme[group + 'EA'];
+}
+function fontName(n, theme, lang, altLang) {
   const name = attr(n, 'typeface');
-  if (name.startsWith('+mj'))
-    return name.endsWith('-ea') ? theme.majorEA : theme.major;
-  if (name.startsWith('+mn'))
-    return name.endsWith('-ea') ? theme.minorEA : theme.minor;
+  if (name.startsWith('+mj') || name.startsWith('+mn')) {
+    const group = name.startsWith('+mj') ? 'major' : 'minor';
+    return name.endsWith('-ea')
+      ? eastAsianFace(theme, group, lang, altLang)
+      : theme[group];
+  }
   return name || undefined;
 }
 function textStyle(n, fallback, theme) {
+  const lang = attr(n, 'lang') || fallback.lang;
+  const altLang = attr(n, 'altLang') || fallback.altLang;
+  const latin = child(n, 'latin'),
+    east = child(n, 'ea');
+  // An explicitly named font with no charset differs from a theme reference.
+  const charset = (slot, inherited) => {
+    if (!slot) return inherited;
+    return attr(slot, 'typeface').startsWith('+')
+      ? undefined
+      : attr(slot, 'charset');
+  };
   return {
+    lang,
+    altLang,
+    fontCharset: charset(latin, fallback.fontCharset),
+    eastAsianCharset: charset(east, fallback.eastAsianCharset),
+    fallbackFont: theme.minor,
+    eastAsianFallback: eastAsianFace(theme, 'minor', lang, altLang),
+    kern: n?.hasAttribute('kern')
+      ? Number(attr(n, 'kern')) / 100
+      : fallback.kern,
     letterSpacing: n?.hasAttribute('spc')
       ? Number(attr(n, 'spc')) / 100
       : fallback.letterSpacing || 0,
-    eastAsianFont: fontName(child(n, 'ea'), theme) || fallback.eastAsianFont,
-    font:
-      fontName(child(n, 'latin'), theme) ||
-      fontName(child(n, 'ea'), theme) ||
-      fallback.font,
+    eastAsianFont:
+      fontName(east, theme, lang, altLang) || fallback.eastAsianFont,
+    font: fontName(latin, theme, lang, altLang) || fallback.font,
     size: n?.hasAttribute('sz') ? Number(attr(n, 'sz')) / 100 : fallback.size,
     color: color(child(n, 'solidFill'), theme, fallback.color),
+    highlight: color(child(n, 'highlight'), theme, fallback.highlight),
+    underline: attr(n, 'u') || fallback.underline,
     bold: n?.hasAttribute('b')
       ? ['true', '1'].includes(attr(n, 'b'))
       : fallback.bold,
@@ -274,11 +310,21 @@ function readShape(n, ctx, index, layer, master) {
       );
       if (kind === 'rect' || kind === 'unsupported') obj.kind = 'text';
     }
-    obj.autoWidth =
-      attr(child(body, 'bodyPr'), 'wrap') === 'none' &&
-      Boolean(child(child(body, 'bodyPr'), 'spAutoFit'));
     const bodies = styles.map((s) => child(s, 'txBody'));
     const bps = bodies.map((b) => child(b, 'bodyPr'));
+    const bodyAttr = (key) => first(...bps.map((b) => attr(b, key)));
+    const fitting = bps
+      .map((b) =>
+        children(b).find((c) =>
+          ['spAutoFit', 'normAutofit', 'noAutofit'].includes(c.localName)
+        )
+      )
+      .find(Boolean);
+    const noWrap = bodyAttr('wrap') === 'none';
+    obj.autoWidth = noWrap && fitting?.localName === 'spAutoFit';
+    if (noWrap && !obj.autoWidth) obj.noWrap = true;
+    if (['1', 'true'].includes(bodyAttr('spcFirstLastPara')))
+      obj.spaceAtEdges = true;
     obj.inset = ['lIns', 'tIns', 'rIns', 'bIns'].map((k, i) =>
       points(
         bps.find((b) => b?.hasAttribute(k)),
@@ -286,7 +332,7 @@ function readShape(n, ctx, index, layer, master) {
         [7.2, 3.6, 7.2, 3.6][i]
       )
     );
-    const anchor = first(...bps.map((b) => attr(b, 'anchor')));
+    const anchor = bodyAttr('anchor');
     obj.valign = { ctr: 'middle', b: 'bottom' }[anchor] || 'top';
     const placeholder = attr(
       desc(n, 'ph'),
@@ -301,20 +347,22 @@ function readShape(n, ctx, index, layer, master) {
     obj.paragraphs = children(body, 'p').map((p) => {
       const pp = child(p, 'pPr'),
         level = 'lvl' + (1 + Number(attr(pp, 'lvl', 0))) + 'pPr';
-      const defaults = [
-        child(ctx.defaults, level),
-        child(masterStyle, level),
-        ...bodies
-          .slice()
-          .reverse()
-          .map((b) => child(child(b, 'lstStyle'), level)),
-        pp,
-      ].filter(Boolean);
+      const lists = [
+        ctx.defaults,
+        masterStyle,
+        ...bodies.map((b) => child(b, 'lstStyle')).reverse(),
+      ];
+      const defaults = lists
+        .flatMap((list) => [child(list, 'defPPr'), child(list, level)])
+        .concat(pp)
+        .filter(Boolean);
       const base = defaults.reduce(
         (s, d) => textStyle(child(d, 'defRPr'), s, ctx.theme),
         {
           font: title ? ctx.theme.major : ctx.theme.minor,
           eastAsianFont: title ? ctx.theme.majorEA : ctx.theme.minorEA,
+          fallbackFont: ctx.theme.minor,
+          eastAsianFallback: ctx.theme.minorEA,
           size: title ? 32 : 18,
           color: color(
             desc(child(n, 'style'), 'fontRef'),
@@ -337,7 +385,7 @@ function readShape(n, ctx, index, layer, master) {
         return child(n, 'spcPts')
           ? Number(attr(child(n, 'spcPts'), 'val')) / 100
           : child(n, 'spcPct')
-            ? (Number(attr(child(n, 'spcPct'), 'val')) / 100000) * base.size
+            ? percent(attr(child(n, 'spcPct'), 'val')) * base.size
             : 0;
       };
       const bullet = format
@@ -353,15 +401,20 @@ function readShape(n, ctx, index, layer, master) {
       const lineHeight = child(ls, 'spcPts')
         ? Number(attr(child(ls, 'spcPts'), 'val')) / 100 + 'px'
         : child(ls, 'spcPct')
-          ? Number(attr(child(ls, 'spcPct'), 'val')) / 100000
+          ? percent(attr(child(ls, 'spcPct'), 'val'))
           : undefined;
       return {
         runs,
         align: first(...format.map(alignment)) || 'left',
-        base,
+        // In an empty Office paragraph the paragraph mark supplies the glyph
+        // metrics and insertion formatting, even when no a:r is present.
+        base: runs.some((r) => r.text)
+          ? base
+          : textStyle(child(p, 'endParaRPr'), base, ctx.theme),
         before: space('spcBef'),
         after: space('spcAft'),
         margin: indent('marL'),
+        marginRight: indent('marR'),
         indent: indent('indent'),
         lineHeight,
         bullet: bullet?.localName === 'buChar' ? attr(bullet, 'char') : '',
@@ -371,10 +424,18 @@ function readShape(n, ctx, index, layer, master) {
       .map((p) => p.runs.map((r) => r.text).join(''))
       .join('\n');
     const firstPara = obj.paragraphs[0],
-      s = firstPara?.runs[0] || firstPara?.base;
+      s = firstPara?.runs.find((r) => r.text) || firstPara?.base;
     if (s)
       for (const k of [
         'font',
+        'eastAsianFont',
+        'fontCharset',
+        'eastAsianCharset',
+        'fallbackFont',
+        'eastAsianFallback',
+        'lang',
+        'altLang',
+        'kern',
         'size',
         'color',
         'bold',

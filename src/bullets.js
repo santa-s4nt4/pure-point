@@ -28,24 +28,42 @@ export function editableParagraphs(root, object) {
       source = Number(parent.dataset.paragraph);
     if (parent.tagName === 'UL' || parent.tagName === 'OL') list = parent;
     let value = '',
+      fragments = [],
       inline = false,
       blocks = false;
     function flush() {
-      rows.push({ text: value.replace(/\u00a0/g, ' '), source, list });
+      rows.push({
+        text: value.replace(/\u00a0/g, ' '),
+        source,
+        list,
+        fragments,
+      });
       value = '';
+      fragments = [];
       inline = false;
+    }
+    function append(n, text) {
+      value += text;
+      // A native edit inside a styled span keeps its original run identity,
+      // including when Japanese and Latin glyphs are rendered separately.
+      if (object.paragraphs && text) {
+        const marker = n.parentElement?.closest('[data-run-index]');
+        fragments.push({
+          run: marker ? Number(marker.dataset.runIndex) : -1,
+          text,
+        });
+      }
+      inline = true;
     }
     function inlineNode(n) {
       if (n.nodeType === Node.TEXT_NODE) {
-        value += n.data;
-        inline = true;
+        append(n, n.data);
         return;
       }
       if (n.nodeType !== Node.ELEMENT_NODE) return;
       if (n.tagName === 'BR') {
         // A final <br> is the native caret stop for an empty paragraph.
-        if (n.nextSibling) value += '\n';
-        inline = true;
+        append(n, n.nextSibling ? '\n' : '');
         return;
       }
       for (const c of n.childNodes) inlineNode(c);
@@ -60,7 +78,7 @@ export function editableParagraphs(root, object) {
     if (inline || (!blocks && !['UL', 'OL'].includes(parent.tagName))) flush();
   }
   scan(root, undefined, null);
-  return rows.map(({ text, source, list }, i) => {
+  return rows.map(({ text, source, list, fragments }, i) => {
     const index = source ?? Math.min(i, (object.paragraphs?.length || 1) - 1);
     const prior = object.paragraphs?.[index];
     const bullet = list ? list.dataset.bullet || '•' : '';
@@ -68,8 +86,21 @@ export function editableParagraphs(root, object) {
       list?.dataset[key] !== undefined
         ? Number(list.dataset[key])
         : defaultValue;
+    let runTexts;
+    if (
+      prior &&
+      fragments.length &&
+      fragments.every(
+        ({ run }, j) => prior.runs[run] && (!j || fragments[j - 1].run <= run)
+      )
+    ) {
+      runTexts = prior.runs.map(() => '');
+      for (const { run, text } of fragments)
+        runTexts[run] += text.replace(/\u00a0/g, ' ');
+    }
     return {
       text,
+      runTexts,
       index,
       bullet,
       margin: bullet
@@ -99,28 +130,32 @@ export function applyParagraphs(object, rows) {
       letterSpacing,
       eastAsianFont,
     };
-    object.paragraphs = rows.map(({ text, index, bullet, margin, indent }) => {
-      const prior = originals[index];
-      const base = prior?.base || standard;
-      const previous = prior?.runs || [];
-      const values = replaceRunText(
-        previous.map((r) => r.text),
-        text
-      );
-      const runs = previous.length
-        ? previous.map((r, i) => ({ ...r, text: values[i] }))
-        : [{ ...base, text }];
-      return {
-        align: object.align,
-        lineHeight: object.lineHeight,
-        ...prior,
-        base,
-        runs,
-        bullet,
-        margin,
-        indent,
-      };
-    });
+    object.paragraphs = rows.map(
+      ({ text, runTexts, index, bullet, margin, indent }) => {
+        const prior = originals[index];
+        const base = prior?.base || standard;
+        const previous = prior?.runs || [];
+        const values =
+          runTexts ||
+          replaceRunText(
+            previous.map((r) => r.text),
+            text
+          );
+        const runs = previous.length
+          ? previous.map((r, i) => ({ ...r, text: values[i] }))
+          : [{ ...base, text }];
+        return {
+          align: object.align,
+          lineHeight: object.lineHeight,
+          ...prior,
+          base,
+          runs,
+          bullet,
+          margin,
+          indent,
+        };
+      }
+    );
   }
   object.text = rows.map((p) => p.text).join('\n');
 }

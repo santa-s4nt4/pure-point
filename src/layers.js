@@ -91,6 +91,7 @@ function scaleTextAndStroke(object, sx, sy) {
     p.base.size *= sy;
     for (const run of p.runs) run.size *= sy;
     if (p.margin) p.margin *= sx;
+    if (p.marginRight) p.marginRight *= sx;
     if (p.indent) p.indent *= sx;
     if (p.before) p.before *= sy;
     if (p.after) p.after *= sy;

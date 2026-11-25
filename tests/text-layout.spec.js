@@ -202,7 +202,7 @@ test('PowerPoint preserves tracking, percentage/fixed leading, and unrelated ric
       tracking: end.paragraphs.map((p) => p.runs.map((r) => r.letterSpacing)),
       pdf:
         pdf.html.includes('letter-spacing: 1.25px') &&
-        pdf.html.includes('line-height: 2.42'),
+        pdf.html.includes('line-height: 2.4;'),
     };
   });
   expect(result).toEqual({

@@ -61,6 +61,7 @@ import { chooseLayout } from './layout-picker.js';
 import { inlineText } from './inline-text.js';
 import { blankDeck, slide, textItem, uid } from './model.js';
 import { importDeck } from './import.js';
+import { japaneseSubstitute, runFontFor } from './text-runs.js';
 import { exportDeck } from './export.js';
 import { defaults, snapAxis, snapTargets } from './grid.js';
 import { el, gridOverlay, icon, itemNode, scene } from './view.js';
@@ -956,9 +957,14 @@ function properties() {
       action('delete', 'Delete object', 'delete')
     );
     if (o.kind === 'text' || o.text) {
+      const displayedFont = runFontFor(o.text, o);
       const families = [...new Set(fonts.map((f) => f.family))],
-        face = fonts.find((f) => f.full === o.font || f.postscript === o.font),
-        family = families.includes(o.font) ? o.font : face?.family || o.font;
+        face = fonts.find(
+          (f) => f.full === displayedFont || f.postscript === displayedFont
+        ),
+        family = families.includes(displayedFont)
+          ? displayedFont
+          : face?.family || displayedFont;
       if (!families.includes(family)) families.unshift(family);
       const members = fonts.filter((f) => f.family === family),
         style =
@@ -1027,25 +1033,42 @@ function render() {
 function loadFonts() {
   const names = new Map();
   function collect(o) {
-    names.set(JSON.stringify([o.font, o.bold, o.italic]), o);
+    if (!o) return;
+    for (const font of [
+      o.font,
+      o.eastAsianFont,
+      japaneseSubstitute(o),
+      japaneseSubstitute(o, true),
+      o.fallbackFont,
+      o.eastAsianFallback,
+    ]) {
+      if (font)
+        names.set(JSON.stringify([font, o.bold, o.italic]), [
+          font,
+          o.bold,
+          o.italic,
+        ]);
+    }
+  }
+  function paragraph(p) {
+    collect(p.base);
+    p.runs.forEach(collect);
   }
   function visit(o) {
     if (o.text || o.kind === 'text') {
       collect(o);
-      for (const p of o.paragraphs || [])
-        for (const r of p.runs) {
-          collect(r);
-          if (r.eastAsianFont) collect({ ...r, font: r.eastAsianFont });
-        }
+      o.paragraphs?.forEach(paragraph);
     }
+    for (const row of o.table?.rows || [])
+      for (const cell of row.cells) cell.paragraphs.forEach(paragraph);
     o.items?.forEach(visit);
   }
   for (const s of deck.slides) {
     s.items.forEach(visit);
     s.back.forEach(visit);
   }
-  for (const f of names.values())
-    platform.loadTypeface(f.font, fonts, f.bold, f.italic);
+  for (const [font, bold, italic] of names.values())
+    platform.loadTypeface(font, fonts, bold, italic);
 }
 function setTool(value) {
   if (drag?.mode === 'draw-vector' || drag?.mode === 'vertex')
@@ -1072,9 +1095,12 @@ function updateObject(key, value) {
     'letterSpacing',
   ].includes(key);
   const paragraphStyle = key === 'align' || key === 'lineHeight';
+  const differs = (style) =>
+    style[key] !== value ||
+    (key === 'font' && style.eastAsianFont && style.eastAsianFont !== value);
   const mixed = o.paragraphs?.some((p) =>
     runStyle
-      ? p.base[key] !== value || p.runs.some((r) => r[key] !== value)
+      ? differs(p.base) || p.runs.some(differs)
       : paragraphStyle && p[key] !== value
   );
   if (o[key] === value && !mixed) return;
@@ -1084,12 +1110,21 @@ function updateObject(key, value) {
   if (editing) {
     const text = editing.read();
     editor = null;
-    if (editing.changed()) editing.apply();
+    if (editing.changed()) {
+      if (o.autoWidth) Object.assign(o, editing.size());
+      editing.apply();
+    }
     editing.close();
     if (o.kind === 'text' && !o.placeholder)
       o.name = text.slice(0, 40) || 'Text';
   }
+  const intrinsic =
+    o.autoWidth && (runStyle || paragraphStyle) && measureTextBox(o);
   o[key] = value;
+  if (key === 'font') {
+    o.eastAsianFont = value;
+    o.fontCharset = o.eastAsianCharset = '';
+  }
   if (key === 'w' && o.autoWidth) o.autoWidth = false;
   if (
     ['dash', 'strokeWidth', 'startArrow', 'endArrow'].includes(key) &&
@@ -1101,11 +1136,16 @@ function updateObject(key, value) {
     if (runStyle)
       for (const style of [p.base, ...p.runs]) {
         style[key] = value;
-        if (key === 'font') style.eastAsianFont = value;
+        if (key === 'font') {
+          style.eastAsianFont = value;
+          style.fontCharset = style.eastAsianCharset = '';
+        }
       }
   }
-  if (o.autoWidth && (runStyle || paragraphStyle)) {
-    measureTextBox(o);
+  if (intrinsic) {
+    const after = measureTextBox(o);
+    o.w = Math.max(2, o.w + after.w - intrinsic.w);
+    o.h = Math.max(1, o.h + after.h - intrinsic.h);
   }
   const provisional = editing?.creation && !o.text;
   if (!provisional) record(before);
@@ -1144,7 +1184,7 @@ function addObject(o) {
   });
 }
 function measureTextBox(object, maxWidth) {
-  const node = itemNode(object, assets);
+  const node = itemNode(object, assets, true);
   Object.assign(node.style, {
     position: 'fixed',
     visibility: 'hidden',
@@ -1162,9 +1202,11 @@ function measureTextBox(object, maxWidth) {
   if (maxWidth !== undefined) text.style.maxWidth = maxWidth + 'px';
   document.body.append(node);
   const box = text.getBoundingClientRect();
-  object.w = Math.max(2, Math.ceil(box.width));
-  object.h = Math.max(object.size * singleLine, Math.ceil(box.height));
   node.remove();
+  return {
+    w: Math.max(2, box.width),
+    h: Math.max(object.size * singleLine, box.height),
+  };
 }
 
 function visibleSlide() {
@@ -1218,7 +1260,10 @@ const clipboard = objectClipboard({
         return;
     } else if (text) {
       const object = textItem(text, 0, 0, 2, 0, 24, { font: 'Yu Gothic' });
-      measureTextBox(object, Math.max(object.size, deck.w * 0.85));
+      Object.assign(
+        object,
+        measureTextBox(object, Math.max(object.size, deck.w * 0.85))
+      );
       // When zoomed into the slide, keep the start of a large paragraph in view.
       const x = Math.max(visible.x, center.x - object.w / 2);
       const y = Math.max(visible.y, center.y - object.h / 2);

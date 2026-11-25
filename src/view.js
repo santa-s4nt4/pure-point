@@ -1,5 +1,16 @@
 import { bulletList } from './bullets.js';
-import { lineBox } from './text.js';
+import {
+  appendTextRun,
+  decorateRun,
+  japaneseSubstitute,
+  startsEastAsian,
+} from './text-runs.js';
+import {
+  leadingOffset,
+  lineAdvance,
+  lineBox,
+  paragraphMetrics,
+} from './text.js';
 import { vectorDrawing } from './vector-view.js';
 import {
   createElement,
@@ -160,15 +171,22 @@ export const el = (tag, cls) => {
   if (cls) n.className = cls;
   return n;
 };
-export const fontCSS = (font) =>
-  `"pp-${CSS.escape(font)}", "${CSS.escape(font)}", sans-serif`;
-function typeStyle(n, o) {
+export function fontCSS(font, fallback, substitute) {
+  const families = [...new Set([font, substitute, fallback].filter(Boolean))];
+  return [
+    ...families.flatMap((f) => [`"pp-${CSS.escape(f)}"`, `"${CSS.escape(f)}"`]),
+    'sans-serif',
+  ].join(', ');
+}
+function typeStyle(n, o, substitute) {
+  if (o.lang) n.lang = o.lang;
   Object.assign(n.style, {
-    fontFamily: fontCSS(o.font),
+    fontFamily: fontCSS(o.font, o.fallbackFont, substitute),
     fontSize: o.size + 'px',
     color: o.color,
     fontWeight: o.bold ? '700' : '400',
     fontStyle: o.italic ? 'italic' : 'normal',
+    fontKerning: o.kern == null ? 'auto' : o.size >= o.kern ? 'normal' : 'none',
     letterSpacing: (o.letterSpacing || 0) + 'px',
   });
 }
@@ -222,7 +240,15 @@ export function itemNode(o, assets, interactive = false, deferImages = false) {
     n.append(vectorDrawing(o, interactive === true));
   if (o.text || o.kind === 'text') {
     const text = el('div', 'item-text');
-    typeStyle(text, o);
+    typeStyle(text, o, japaneseSubstitute(o));
+    text.style.setProperty(
+      '--line-offset',
+      leadingOffset(o.lineHeight, o.size) + 'px'
+    );
+    text.style.setProperty(
+      '--minimum-line',
+      lineAdvance(o.lineHeight, o.size) + 'px'
+    );
     const [l, t, r, b] = o.inset;
     Object.assign(text.style, {
       padding: `${t}px ${r}px ${b}px ${l}px`,
@@ -238,38 +264,70 @@ export function itemNode(o, assets, interactive = false, deferImages = false) {
         ? 'Title'
         : 'Content';
     }
-    if (o.autoWidth) text.classList.add('point-text');
+    if (o.autoWidth || o.noWrap) text.classList.add('point-text');
     if (o.paragraphs) {
       for (const [index, p] of o.paragraphs.entries()) {
         const line = el(p.bullet ? 'li' : 'div');
         line.dataset.paragraph = index;
-        typeStyle(line, p.base);
+        const { strut, offset, minHeight } = paragraphMetrics(p);
+        const style = strut || p.base;
+        const eastAsian = startsEastAsian(strut?.text, style);
+        const family = eastAsian
+          ? style.eastAsianFont || style.font
+          : style.font;
+        typeStyle(
+          line,
+          {
+            ...style,
+            font: family,
+            fallbackFont: eastAsian
+              ? style.eastAsianFallback || style.fallbackFont
+              : style.fallbackFont,
+          },
+          japaneseSubstitute(style, eastAsian)
+        );
+        line.style.setProperty('--line-offset', offset + 'px');
+        // WebKit rounds each intrinsic text line down to a whole logical
+        // pixel. Preserve the fractional paragraph advance across a slide.
+        // A minimum leaves additional soft-wrapped lines free to expand.
+        line.style.setProperty('--minimum-line', minHeight + 'px');
+        const last = index === o.paragraphs.length - 1;
+        const before = index === 0 && !o.spaceAtEdges ? 0 : p.before || 0;
+        const after = last && !o.spaceAtEdges ? 0 : p.after || 0;
         Object.assign(line.style, {
           textAlign: p.align,
-          marginTop: (p.before || 0) + 'px',
-          marginBottom: (p.after || 0) + 'px',
+          marginTop: before + 'px',
+          marginBottom: after - (last ? offset : 0) + 'px',
+          paddingRight: (p.marginRight || 0) + 'px',
           ...(!p.bullet && {
             paddingLeft: (p.margin || 0) + 'px',
             textIndent: (p.indent || 0) + 'px',
           }),
           lineHeight: lineBox(p.lineHeight),
         });
-        for (const run of p.runs) {
-          const chunks =
-            run.eastAsianFont && run.eastAsianFont !== run.font
-              ? run.text.split(
-                  /([\u3000-\u30ff\u3400-\u9fff\uac00-\ud7af\uff01-\uffef]+)/u
-                )
-              : [run.text];
-          chunks.forEach((t, i) => {
-            if (!t) return;
+        p.runs.forEach((run, i) =>
+          appendTextRun(
+            line,
+            run,
+            typeStyle,
+            interactive === true ? i : undefined
+          )
+        );
+        if (!line.childNodes.length) {
+          const stop = el('br');
+          if (
+            interactive === true &&
+            (p.base.highlight ||
+              (p.base.underline && p.base.underline !== 'none'))
+          ) {
+            // Keep the paragraph mark's insertion style on an inline box.
+            // An empty box has no background area until the first glyph arrives.
             const span = el('span');
-            span.textContent = t;
-            typeStyle(span, i % 2 ? { ...run, font: run.eastAsianFont } : run);
+            decorateRun(span, p.base);
+            span.append(stop);
             line.append(span);
-          });
+          } else line.append(stop);
         }
-        if (!line.childNodes.length) line.append(el('br'));
         if (p.bullet) {
           const list = bulletList(p, o.size);
           list.append(line);
@@ -279,6 +337,8 @@ export function itemNode(o, assets, interactive = false, deferImages = false) {
     } else {
       const body = el('div');
       body.textContent = o.text;
+      body.style.minHeight =
+        o.text.split('\n').length * lineAdvance(o.lineHeight, o.size) + 'px';
       text.append(body);
     }
     if (text.dataset.prompt) {
