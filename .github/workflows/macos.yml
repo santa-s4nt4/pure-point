@@ -4,12 +4,21 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      recover_run_id:
+        description: 'Publish an existing tag build (Actions run ID, from main). Leave blank for a new build.'
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: inputs.recover_run_id == ''
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      commit: ${{ steps.version.outputs.commit }}
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -26,10 +35,12 @@ jobs:
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
           test -x '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' || npx playwright install chrome
       - name: Check release version
+        id: version
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           version=$(node -p "require('./package.json').version")
           test "$GITHUB_REF_NAME" = "v$version"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Test the editor and native document handling
         run: |
           npm test
@@ -37,31 +48,67 @@ jobs:
       - name: Build and archive the universal app
         run: bash scripts/package-macos.sh
       - uses: actions/upload-artifact@v7
+        id: upload
         with:
           name: pure-point-macOS
           path: release/pure-point-macOS.zip
           if-no-files-found: error
           retention-days: 14
 
+  recover:
+    if: github.event_name == 'workflow_dispatch' && inputs.recover_run_id != ''
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      tag: ${{ steps.source.outputs.tag }}
+      commit: ${{ steps.source.outputs.commit }}
+      artifact_id: ${{ steps.source.outputs.artifact_id }}
+    steps:
+      - name: Require the default branch for recovery
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Verify the source run and artifact
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.recover_run_id }}
+        run: node scripts/resolve-release-run.mjs "$SOURCE_RUN"
+
   publish:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, recover]
+    if: >-
+      !cancelled() &&
+      ((needs.build.result == 'success' && startsWith(github.ref, 'refs/tags/')) ||
+       needs.recover.result == 'success')
     runs-on: ubuntu-latest
     concurrency:
-      group: publish-${{ github.workflow }}-${{ github.ref }}
+      group: publish-${{ github.workflow }}-refs/tags/${{ needs.recover.outputs.tag || github.ref_name }}
       cancel-in-progress: false
     permissions:
+      actions: read
       contents: write
+    env:
+      RELEASE_TAG: ${{ needs.recover.outputs.tag || github.ref_name }}
+      RELEASE_COMMIT: ${{ needs.recover.outputs.commit || needs.build.outputs.commit }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
-          name: pure-point-macOS
+          artifact-ids: ${{ needs.recover.outputs.artifact_id || needs.build.outputs.artifact_id }}
+          run-id: ${{ inputs.recover_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
           path: release
       - name: Publish the app to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: bash scripts/publish-release.sh "$GITHUB_REF_NAME" release/pure-point-macOS.zip
+        run: bash scripts/publish-release.sh "$RELEASE_TAG" release/pure-point-macOS.zip

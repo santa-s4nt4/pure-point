@@ -66,6 +66,8 @@ The UI tests use the installed Google Chrome. The browser development surface st
 
 Pushing a version tag such as `v0.3.0` runs the editor and Rust tests, builds an Apple Silicon and Intel universal app, and publishes `pure-point-macOS.zip` to GitHub Releases. The workflow can also be run manually from Actions to download a build artifact. Release bundles use an ad-hoc signature.
 
+If GitHub interrupts publication, the publisher retries and reuses any uploaded ZIP with the same SHA-256. To recover a previous tag build while its artifact is still available, open **Actions → macOS release → Run workflow**, select `main`, and enter the original run ID in `recover_run_id`. The workflow verifies the build and tag, then publishes the original ZIP.
+
 After a release is published, run the following on a Mac to download it and unpack the app on the Desktop.
 
 ```sh
