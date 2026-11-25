@@ -146,27 +146,26 @@ struct Typeface {
     style: String,
     postscript: String,
     full: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    aliases: Vec<String>,
 }
 #[tauri::command]
 async fn system_fonts() -> Vec<Typeface> {
-    unsafe extern "C" {
-        fn pp_register_yu_gothic();
-    }
-    unsafe {
-        pp_register_yu_gothic();
-    }
+    let mut aliases = fonts::office_aliases();
     let mut result = Vec::new();
     if let Some(faces) = font_collection::create_for_all_families().get_descriptors() {
         for face in faces.iter() {
             let traits = face.traits();
             let flags = traits.symbolic_traits();
+            let postscript = face.font_name();
             result.push(Typeface {
                 bold: flags.is_bold(),
                 italic: flags.is_italic(),
                 weight: traits.normalized_weight(),
                 family: face.family_name(),
                 style: face.style_name(),
-                postscript: face.font_name(),
+                aliases: aliases.remove(&postscript).unwrap_or_default(),
+                postscript,
                 full: face.display_name(),
             });
         }

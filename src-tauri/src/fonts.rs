@@ -1,5 +1,30 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use core_text::font;
+use std::collections::HashMap;
+use std::ffi::{c_char, CStr, OsStr};
+use std::os::unix::ffi::OsStrExt;
+
+pub fn office_aliases() -> HashMap<String, Vec<String>> {
+    unsafe extern "C" {
+        fn pp_register_office_fonts() -> *const c_char;
+    }
+    let path = unsafe { pp_register_office_fonts() };
+    if path.is_null() {
+        return HashMap::new();
+    }
+    // Office's GDI family table maps localized PPTX family names to the
+    // PostScript faces used on Mac (e.g. 游ゴシック → YuGothic-Regular, ...).
+    let path = OsStr::from_bytes(unsafe { CStr::from_ptr(path) }.to_bytes());
+    let names: std::collections::BTreeMap<String, Vec<String>> =
+        plist::from_file(path).unwrap_or_default();
+    let mut aliases = HashMap::<String, Vec<String>>::new();
+    for (name, faces) in names {
+        for face in faces {
+            aliases.entry(face).or_default().push(name.clone());
+        }
+    }
+    aliases
+}
 
 // WebKit can restrict local() for user-installed fonts. Reassemble the selected
 // Core Text face as an in-memory sfnt, including faces stored inside collections.

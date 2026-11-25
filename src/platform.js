@@ -145,6 +145,41 @@ export async function getFonts() {
 const loaded = new Set();
 const pendingFonts = new Map();
 const pdfFontRules = new Map();
+const fontSources = new Map();
+const fontIndexes = new WeakMap();
+const fontKey = (name) => name.normalize('NFKC').trim().toLowerCase();
+
+export function resolveTypeface(name, faces, bold = false, italic = false) {
+  if (!name || !faces.length) return;
+  let index = fontIndexes.get(faces);
+  if (!index) {
+    index = new Map();
+    for (const face of faces) {
+      for (const spelling of new Set([
+        face.family,
+        face.full,
+        face.postscript,
+        ...(face.aliases || []),
+      ])) {
+        if (!spelling) continue;
+        const key = fontKey(spelling);
+        if (!index.has(key)) index.set(key, new Set());
+        index.get(key).add(face);
+      }
+    }
+    fontIndexes.set(faces, index);
+  }
+  const candidates = index.get(fontKey(name));
+  if (!candidates) return;
+  const score = (f) =>
+    (Boolean(f.italic) === italic ? 0 : 8) +
+    (Boolean(f.bold) === bold ? 0 : 4) +
+    Math.abs((f.weight || 0) - (bold ? 0.4 : 0));
+  let best;
+  for (const face of candidates)
+    if (!best || score(face) < score(best)) best = face;
+  return best;
+}
 export async function pdfFontStyles() {
   await Promise.all([...pendingFonts.values()]);
   return [...pdfFontRules.values()].join('\n');
@@ -158,43 +193,40 @@ export function loadTypeface(font, faces, bold = false, italic = false) {
   pendingFonts.set(key, work);
   return work;
 }
+function sourceFor(postscript) {
+  if (!fontSources.has(postscript)) {
+    const local = `local("${CSS.escape(postscript)}")`;
+    const source = new FontFace(postscript, local)
+      .load()
+      .then(
+        () => local,
+        async () => {
+          const data = await invoke('font_data', { postscript });
+          return `url("data:font/otf;base64,${data}")`;
+        }
+      )
+      .catch((error) => {
+        fontSources.delete(postscript);
+        throw error;
+      });
+    fontSources.set(postscript, source);
+  }
+  return fontSources.get(postscript);
+}
 async function registerTypeface(font, faces, bold = false, italic = false) {
   const key = JSON.stringify([font, bold, italic]);
   if (!native || loaded.has(key)) return;
-  const family = faces.filter((f) => f.family === font);
-  const matches = family.filter((f) => f.bold === bold && f.italic === italic);
-  const targetWeight = bold ? 0.4 : 0;
-  const face =
-    matches.sort(
-      (a, b) =>
-        Math.abs(a.weight - targetWeight) - Math.abs(b.weight - targetWeight)
-    )[0] ||
-    (family.length
-      ? null
-      : faces.find((f) => f.full === font || f.postscript === font));
+  const face = resolveTypeface(font, faces, bold, italic);
   if (!face) return;
   loaded.add(key);
   try {
     const alias = 'pp-' + font,
       descriptors = {
-        weight: bold ? '700' : '400',
-        style: italic ? 'italic' : 'normal',
+        weight: face.bold ? '700' : '400',
+        style: face.italic ? 'italic' : 'normal',
       };
-    let src = `local("${CSS.escape(face.postscript)}")`;
-    let local = new FontFace(alias, src, descriptors);
-    try {
-      await local.load();
-    } catch {
-      const data = await invoke('font_data', { postscript: face.postscript });
-      src = 'url("data:font/otf;base64,' + data + '")';
-      local = new FontFace(
-        alias,
-        Uint8Array.from(atob(data), (c) => c.charCodeAt(0)),
-        descriptors
-      );
-      await local.load();
-    }
-    document.fonts.add(local);
+    const src = await sourceFor(face.postscript);
+    document.fonts.add(await new FontFace(alias, src, descriptors).load());
     pdfFontRules.set(
       key,
       `@font-face{font-family:"${CSS.escape(alias)}";src:${src};font-weight:${descriptors.weight};font-style:${descriptors.style}}`
