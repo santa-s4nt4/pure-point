@@ -1,0 +1,40 @@
+name: Retry unavailable macOS runner
+
+on:
+  workflow_run:
+    workflows: ['macOS release']
+    types: [completed]
+
+permissions:
+  actions: write
+  checks: read
+
+jobs:
+  retry:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt == 1 &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Retry once if GitHub could not assign the Apple Silicon runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          run="repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
+          check=$(gh api "$run/attempts/1/jobs" --jq '
+            .jobs[] | select(.name == "build" and (.labels | index("macos-15"))
+              and ((.runner_name // "") == "") and ((.steps | length) == 0))
+            | .check_run_url | split("/") | last')
+          if [[ -z "$check" ]]; then exit 0; fi
+          unavailable=$(gh api "repos/$GITHUB_REPOSITORY/check-runs/$check/annotations" --jq '
+            any(.[]; .annotation_level == "failure" and
+                (.message | test("not acquired by Runner of type hosted"; "i")))')
+          if [[ "$unavailable" == true ]]; then
+            # A maintainer may already have started a second attempt.
+            if [[ "$(gh api "$run" --jq '.run_attempt')" == 1 ]]; then
+              gh api --method POST "$run/rerun"
+            fi
+          fi
