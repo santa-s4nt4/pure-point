@@ -110,6 +110,9 @@ root.innerHTML = workspace(action);
 const designUnit = 2;
 const commentDrafts = new Map();
 const scriptField = $('#slide-script');
+const shareButton = $('[data-action="copyShareLink"]');
+let shareMode = 'none';
+let sharingPath = null;
 let scriptOpen = false,
   savingDocument = false,
   noteRevision = null,
@@ -236,6 +239,49 @@ const fail = (error) =>
   dialog('Unable to complete the operation', error?.message || String(error), [
     ['ok', 'Close'],
   ]);
+async function refreshSharing() {
+  const file = path;
+  shareMode = 'none';
+  shareButton.hidden = true;
+  const mode = await platform.shareDocumentMode(file).catch(() => 'none');
+  if (!file || path !== file || !['graph', 'finder'].includes(mode)) return;
+  shareMode = mode;
+  shareButton.querySelector('span').textContent = mode === 'graph' ? 'Copy link' : 'Share…';
+  shareButton.title = mode === 'graph'
+    ? 'Copy a link that people at Dentsu can use to edit this file'
+    : 'Share this file using OneDrive in Finder';
+  shareButton.hidden = false;
+}
+async function shareDocument() {
+  if (!path || shareMode === 'none' || sharingPath) return;
+  const file = path;
+  sharingPath = file;
+  shareButton.disabled = true;
+  shareButton.setAttribute('aria-busy', 'true');
+  try {
+    let message = '';
+    if (shareMode === 'graph') {
+      try {
+        await platform.copyOrganizationLink(file);
+        toast('Edit link copied for people at Dentsu.');
+        return;
+      } catch (error) {
+        if (file !== path) return;
+        message = (error?.message || String(error)) + '\n\n';
+      }
+    }
+    const answer = await dialog(
+      'Share in OneDrive',
+      message + 'In Finder, Control-click the selected presentation and choose OneDrive’s Share command. In Link settings, select “People in Dentsu” and “Can edit”, then choose “Copy link”.',
+      [['cancel', 'Cancel'], ['reveal', 'Show in Finder']]
+    );
+    if (answer === 'reveal') await platform.revealShareDocument(file);
+  } finally {
+    sharingPath = null;
+    shareButton.removeAttribute('aria-busy');
+    shareButton.disabled = busy;
+  }
+}
 function snapshot() {
   return {
     deck: JSON.stringify(deck),
@@ -283,6 +329,7 @@ function restore(from, to) {
   render();
 }
 function status() {
+  shareButton.disabled = busy || Boolean(sharingPath);
   const dirty = currentRevision !== savedRevision || Boolean(editor?.changed());
   if (dirty !== lastDirty) {
     lastDirty = dirty;
@@ -1323,6 +1370,7 @@ async function save(as) {
   );
   if (!output) return false;
   path = output;
+  refreshSharing();
   savedRevision = revision;
   status();
   toast('Presentation saved.');
@@ -1359,6 +1407,7 @@ function reset(next, nextBase, nextTitle, nextPath) {
   assets = { ...base?.parts.media };
   title = nextTitle;
   path = nextPath;
+  refreshSharing();
   history = [];
   future = [];
   currentRevision = savedRevision = ++serial;
@@ -1798,6 +1847,7 @@ async function execute(id, button) {
   if (!['fileMenu', 'slideMenu'].includes(id)) $('.menu')?.remove();
   if (id === 'copyObjects') return clipboard.copy();
   if (id === 'pasteObjects') return clipboard.paste();
+  if (id === 'copyShareLink') return shareDocument();
   if (id === 'overview' || id === 'canvasView') {
     setOverview(id === 'overview' ? !overview : false);
     return;

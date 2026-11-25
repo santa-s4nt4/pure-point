@@ -8,6 +8,10 @@ export const fileName = (path) =>
     ?.split('/')
     .pop()
     ?.replace(/\.pptx$/i, '') || 'untitled';
+export const shareDocumentMode = (path) =>
+  native && path ? invoke('share_document_mode', { path }) : Promise.resolve('none');
+export const revealShareDocument = (path) => invoke('reveal_share_document', { path });
+export const copyOrganizationLink = (path) => invoke('copy_organization_link', { path });
 export async function nativeEvents(callback) {
   if (native) await listen('editor-command', (e) => callback(e.payload));
 }

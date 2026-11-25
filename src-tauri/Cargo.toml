@@ -1,6 +1,6 @@
 [package]
 name = "pure-point"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 
 [build-dependencies]
@@ -16,3 +16,5 @@ rfd = "0.17"
 zip = { version = "4", default-features = false, features = ["deflate"] }
 tempfile = "3"
 core-text = "22"
+plist = "1"
+uuid = "1"

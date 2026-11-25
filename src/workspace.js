@@ -15,11 +15,14 @@ export function workspace(action) {
     ['embed', 'Embed YouTube or Vimeo…'],
   ];
   return `<header class="document-bar" data-tauri-drag-region="deep">
-    <div class="document-tools">
-      <button class="p-menu" data-action="fileMenu" aria-label="Document menu" aria-haspopup="menu" title="Document menu"><canvas id="floating-p" width="150" height="150"></canvas>${icon('down', 11)}</button>
+    <div class="document-name">
+      <button type="button" class="p-menu" data-action="fileMenu" aria-label="Document menu" aria-haspopup="menu" title="Document menu"><canvas id="floating-p" width="150" height="150" aria-hidden="true"></canvas><span class="doc-name">untitled.pptx</span>${icon('down', 11)}</button>
+      <span id="status" role="status"></span>
     </div>
-    <div class="document-name"><span class="doc-name">untitled.pptx</span><span id="status" role="status"></span></div>
-    <div class="panel-toggles" role="group" aria-label="Workspace panels">${action('navigator', 'Toggle slide navigator', 'sidebar')}${action('script', 'Toggle script', 'script')}${action('inspector', 'Toggle inspector', 'panel')}</div>
+    <div class="header-actions">
+      <button type="button" class="share-link" data-action="copyShareLink" hidden>${icon('embed', 14)}<span>Share…</span></button>
+      <div class="panel-toggles" role="group" aria-label="Workspace panels">${action('navigator', 'Toggle slide navigator', 'sidebar')}${action('script', 'Toggle script', 'script')}${action('inspector', 'Toggle inspector', 'panel')}</div>
+    </div>
   </header>
   <main class="work">
     <aside id="slide-navigator" class="rail" aria-label="Slide navigator">

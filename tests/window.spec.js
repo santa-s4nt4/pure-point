@@ -14,9 +14,26 @@ test('The titlebar controls the workspace and keeps the document menu accessible
   const inspector = header.getByRole('button', { name: 'Toggle inspector' });
   const script = header.getByRole('button', { name: 'Toggle script' });
   const field = page.getByRole('textbox', { name: 'Slide script' });
-  await expect(header.locator('.doc-name')).toHaveText('untitled.pptx');
+  const menu = header.getByRole('button', { name: 'Document menu' });
+  const filename = menu.locator('.doc-name');
+  const logo = menu.locator('#floating-p');
+  await expect(filename).toHaveText('untitled.pptx');
   await expect(header.locator('#status')).toHaveText('Not saved yet');
   await expect(header).toHaveAttribute('data-tauri-drag-region', 'deep');
+  const barBox = await header.boundingBox();
+  const titleBox = await header.locator('.document-name').boundingBox();
+  const logoBox = await logo.boundingBox();
+  expect(titleBox.x + titleBox.width / 2).toBeCloseTo(
+    barBox.x + barBox.width / 2,
+    0
+  );
+  expect(logoBox.x + logoBox.width).toBeLessThanOrEqual(
+    (await filename.boundingBox()).x
+  );
+  await expect(
+    header.locator('[data-action=copyShareLink] + .panel-toggles')
+  ).toBeVisible();
+  await expect(header.locator('[data-action=copyShareLink]')).toBeHidden();
   await expect(field).toBeHidden();
   const before = await stage.boundingBox();
   await navigator.click();
@@ -26,8 +43,12 @@ test('The titlebar controls the workspace and keeps the document menu accessible
   await expect(page.locator('.inspector')).toBeHidden();
   await expect(navigator).toHaveAttribute('aria-pressed', 'false');
   expect((await stage.boundingBox()).width).toBeGreaterThan(before.width + 200);
-  await header.getByRole('button', { name: 'Document menu' }).click();
+  await filename.click();
   await expect(page.locator('.menu [data-action=open]')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeFocused();
+  await logo.click();
+  await expect(page.locator('.menu [data-action=saveAs]')).toBeVisible();
   await page.keyboard.press('Escape');
   await inspector.click();
   await navigator.click();

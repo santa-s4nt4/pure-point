@@ -5,6 +5,7 @@ mod movies;
 mod package;
 mod pdf;
 mod player;
+mod sharing;
 
 use core_text::{
     font_collection,
@@ -236,6 +237,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             open_document,
             open_template,
+            sharing::share_document_mode,
+            sharing::reveal_share_document,
+            sharing::copy_organization_link,
             pdf::export_pdf,
             release_document,
             save_document,

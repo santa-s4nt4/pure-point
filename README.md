@@ -1,10 +1,22 @@
 # pure-point
 
-A macOS slide editor built with Rust, Tauri, and WebKit. Open `pure-point.app` to start. Click the animated **P** in the title bar for New, Open, Save, Save As, Export PDF, Present, Undo, and Redo.
+A macOS slide editor built with Rust, Tauri, and WebKit. Open `pure-point.app` to start. Click the filename or the animated **P** beside it in the center of the title bar for New, Open, Save, Save As, Export PDF, Present, Undo, and Redo.
 
 ## Documents
 
 On this Mac, New and startup read `~/Library/CloudStorage/OneDrive-電通/zero/template.potx`. The editor opens a fresh **untitled.pptx** based on that template. The first Save asks for a name and location. If that file is absent, the app starts with a blank presentation. The template stays in OneDrive. A widescreen template uses a 1920 × 1080 design canvas, with editable position and dimensions in pixels. Font sizes are in PowerPoint points. Opening an existing presentation retains its page dimensions.
+
+### Sharing a Dentsu OneDrive file
+
+Save the presentation in `~/Library/CloudStorage/OneDrive-電通`. The sharing control appears just before the panel buttons. **Share…** reveals the saved file in Finder. Control-click the file, choose OneDrive’s **Share** command, and select **People in 電通** and **Can edit** in link settings. Choose **Copy link**.
+
+For direct **Copy link**, install PowerShell 7 for macOS and run the following command in Terminal. Then reopen the presentation. Microsoft handles sign-in and consent for delegated `Files.ReadWrite` access under your organization's policies. [PowerShell for macOS](https://learn.microsoft.com/en-us/powershell/scripting/install/install-powershell-on-macos) · [Microsoft Graph PowerShell installation](https://learn.microsoft.com/en-us/powershell/microsoftgraph/installation)
+
+```sh
+pwsh -NoProfile -Command 'Install-Module Microsoft.Graph.Authentication -Scope CurrentUser -Repository PSGallery'
+```
+
+For a synced file in a recognized Dentsu business account, **Copy link** requests an organization-only editing link. The app checks the cloud file against the saved copy and verifies the returned permissions before copying the URL. If direct sharing is unavailable, use the Finder option. OneDrive manages existing permissions on the file. [Microsoft Graph sharing links](https://learn.microsoft.com/en-us/graph/api/driveitem-createlink)
 
 ## Slides and layout
 
@@ -67,7 +79,7 @@ The UI tests use the installed Google Chrome. The browser development surface st
 
 ## macOS releases
 
-Pushing a version tag such as `v0.3.0` runs the editor and Rust tests, builds an Apple Silicon and Intel universal app, and publishes `pure-point-macOS.zip` to GitHub Releases. The workflow can also be run manually from Actions to download a build artifact. Release bundles use an ad-hoc signature.
+Pushing a version tag such as `v0.3.2` runs the editor and Rust tests, builds an Apple Silicon and Intel universal app, and publishes `pure-point-macOS.zip` to GitHub Releases. If GitHub reports it could not allocate the Apple Silicon build runner, the release is retried once. The workflow can also be run manually from Actions to download a build artifact. Release bundles use an ad-hoc signature.
 
 If GitHub interrupts publication, the publisher retries and reuses any uploaded ZIP with the same SHA-256. To recover a previous tag build while its artifact is still available, open **Actions → macOS release → Run workflow**, select `main`, and enter the original run ID in `recover_run_id`. The workflow verifies the build and tag, then publishes the original ZIP.
 
