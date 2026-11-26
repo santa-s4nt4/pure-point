@@ -136,8 +136,10 @@ test('System text and screenshots paste as editable, undoable slide objects and 
   const saved = page.waitForEvent('download');
   await page.keyboard.press('Meta+Shift+s');
   await (await saved).saveAs(output);
+  await expect(page.locator('#status')).toHaveText('Saved');
+  await page.locator('.p-menu').click();
   const opened = page.waitForEvent('filechooser');
-  await page.keyboard.press('Meta+o');
+  await page.getByRole('menuitem', { name: /Open presentation/ }).click();
   await (await opened).setFiles(output);
   await expect(page.locator('.doc-name')).toHaveText('clipboard.pptx');
   await expect(text).toHaveText(lines, { useInnerText: true });
