@@ -1,3 +1,4 @@
+import { measureTextElement } from './text.js';
 import { editableParagraphs, applyParagraphs, convertDash } from './bullets.js';
 // Keep native selection and IME on the glyphs in the transformed slide.
 function linesOf(input) {
@@ -125,26 +126,20 @@ export function inlineText({ item, object, event, finish, onInput }) {
   if (!input.firstChild) input.append(document.createElement('div'));
   if (input.firstElementChild && !input.firstElementChild.childNodes.length)
     input.firstElementChild.append(document.createElement('br'));
-  function intrinsicSize() {
-    // Measure without changing the visible frame or its vertical alignment.
-    const width = input.style.width,
-      height = input.style.height;
-    input.style.width = 'max-content';
-    input.style.height = 'max-content';
-    const style = getComputedStyle(input);
-    const size = { w: parseFloat(style.width), h: parseFloat(style.height) };
-    input.style.width = width;
-    input.style.height = height;
-    return size;
-  }
+  // WebKit caches the preferred width of the active contenteditable during
+  // typing. Measure fresh layout without disturbing its caret or IME range.
+  const intrinsicSize = () => measureTextElement(input.cloneNode(true));
   const initial = object.autoWidth && intrinsicSize();
+  // Imported AutoFit frames may have authored space around the glyphs.
+  const extraWidth =
+    object.source != null && initial ? object.w - initial.w : 0;
+  const extraHeight =
+    object.source != null && initial ? object.h - initial.h : 0;
   function adjust() {
     if (!initial || !touched) return;
-    // Office's auto-fit box can include extra space around the text. Keep its
-    // authored dimensions on entry and resize by the change caused by typing.
     const size = intrinsicSize();
-    item.style.width = Math.max(2, object.w + size.w - initial.w) + 'px';
-    item.style.height = Math.max(1, object.h + size.h - initial.h) + 'px';
+    item.style.width = Math.max(2, size.w + extraWidth) + 'px';
+    item.style.height = Math.max(1, size.h + extraHeight) + 'px';
   }
   input.addEventListener(
     'beforeinput',

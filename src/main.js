@@ -23,6 +23,7 @@ import {
 } from './arrange.js';
 import { chooseColor, closeColorPicker } from './color-dialog.js';
 import { documentColors } from './paint.js';
+import { captureSlides, pasteSlides } from './slide-clipboard.js';
 import { objectClipboard } from './object-clipboard.js';
 import {
   captureClipboardMedia,
@@ -51,11 +52,12 @@ import {
   independentEntries,
   copiesOnSlide,
   localDelta,
+  fitGroups,
   makeGroup,
   ungroup,
 } from './layers.js';
 import { layerPanel, toggleExpanded } from './layer-panel.js';
-import { singleLine } from './text.js';
+import { defaultTextSize, measureTextElement, singleLine } from './text.js';
 import { layoutOptions } from './slide-layouts.js';
 import { chooseLayout } from './layout-picker.js';
 import { inlineText } from './inline-text.js';
@@ -118,6 +120,7 @@ let scriptOpen = false,
   savingDocument = false,
   noteRevision = null,
   navigatorOpen = localStorage.getItem('pure-point.navigator') !== 'closed';
+let documentId = uid();
 let overview = false,
   inspectorOpen = localStorage.getItem('pure-point.inspector') !== 'closed';
 let tileWidth = 216,
@@ -127,8 +130,6 @@ let tileWidth = 216,
   pinPosition = null,
   pinning = false,
   focusComment = null;
-const inspectorSlideHost = el('div', 'inspector-slides');
-const inspectorSlides = slideBrowser(inspectorSlideHost);
 const railSlides = slideBrowser($('.thumbs')),
   overviewSlides = slideBrowser($('.sorter'), { sorter: true });
 animateLogo($('#floating-p'));
@@ -302,6 +303,7 @@ function snapshot() {
   };
 }
 function record(before) {
+  fitGroups(active().items);
   refreshCommentPositions(active());
   history.push(before);
   while (
@@ -372,8 +374,6 @@ function status() {
 function renderThumbs() {
   $('.head-count').textContent = deck.slides.length;
   railSlides.render(deck, assets, index, slideIds());
-  if (tab === 'slides' && inspectorSlideHost.isConnected)
-    inspectorSlides.render(deck, assets, index, slideIds());
   if (overview) overviewSlides.render(deck, assets, index, slideIds());
 }
 function setOverview(on) {
@@ -895,17 +895,6 @@ function properties() {
     });
     return;
   }
-  if (tab === 'slides') {
-    if (!container.contains(inspectorSlideHost)) {
-      container.innerHTML =
-        '<div class="section-heading inspector-slides-head"><h3>Slides</h3>' +
-        action('addSlide', 'Add slide', 'plus') +
-        '</div>';
-      container.append(inspectorSlideHost);
-      inspectorSlides.render(deck, assets, index, slideIds());
-    } else inspectorSlides.highlight(index, slideIds());
-    return;
-  }
   if (tab === 'layers') {
     container.innerHTML = layerPanel(
       active().items,
@@ -1014,6 +1003,11 @@ function properties() {
       html += section('Appearance', swatch('Fill', o.fill, 'fill'));
     if (vectorKinds.has(o.kind))
       html += strokePanel(o, { section, field, swatch });
+    if (o.kind === 'image')
+      html += section(
+        'Image',
+        '<div class="layer-set"><button data-action="replaceMedia">Replace image…</button></div>'
+      );
     if (o.kind === 'unsupported')
       html += section(
         'PowerPoint object',
@@ -1166,7 +1160,6 @@ function switchSlide(i) {
   pinning = false;
   focusComment = null;
   railSlides.reveal(active());
-  inspectorSlides.reveal(active());
   setSelection([]);
   tool = 'pointer';
   render();
@@ -1185,27 +1178,10 @@ function addObject(o) {
 }
 function measureTextBox(object, maxWidth) {
   const node = itemNode(object, assets, true);
-  Object.assign(node.style, {
-    position: 'fixed',
-    visibility: 'hidden',
-    left: '-100000px',
-    top: '0',
-    transform: 'none',
-  });
-  const text = node.querySelector('.item-text');
-  Object.assign(text.style, {
-    width: 'max-content',
-    height: 'auto',
-    right: 'auto',
-    bottom: 'auto',
-  });
-  if (maxWidth !== undefined) text.style.maxWidth = maxWidth + 'px';
-  document.body.append(node);
-  const box = text.getBoundingClientRect();
-  node.remove();
+  const box = measureTextElement(node.querySelector('.item-text'), maxWidth);
   return {
-    w: Math.max(2, box.width),
-    h: Math.max(object.size * singleLine, box.height),
+    w: Math.max(2, box.w),
+    h: Math.max(object.size * singleLine, box.h),
   };
 }
 
@@ -1221,22 +1197,22 @@ function visibleSlide() {
   return { x: left, y: top, w: right - left, h: bottom - top };
 }
 
-const canvasClipboardAvailable = (target) =>
+const clipboardAvailable = (target) =>
   !busy &&
   !present &&
-  !overview &&
   !editor &&
   !drag &&
   !document.querySelector('dialog[open]') &&
   !target?.closest?.('input,textarea,select,[contenteditable="true"]');
 
 const clipboard = objectClipboard({
-  available: canvasClipboardAvailable,
+  available: clipboardAvailable,
   destination: active,
   async insertExternal({ images, text }, destination) {
     if (
       destination !== active() ||
-      !canvasClipboardAvailable(document.activeElement)
+      overview ||
+      !clipboardAvailable(document.activeElement)
     )
       return;
     const originalDeck = deck;
@@ -1255,11 +1231,14 @@ const clipboard = objectClipboard({
       if (
         deck !== originalDeck ||
         destination !== active() ||
-        !canvasClipboardAvailable(document.activeElement)
+        overview ||
+        !clipboardAvailable(document.activeElement)
       )
         return;
     } else if (text) {
-      const object = textItem(text, 0, 0, 2, 0, 24, { font: 'Yu Gothic' });
+      const object = textItem(text, 0, 0, 2, 0, defaultTextSize, {
+        font: 'Yu Gothic',
+      });
       Object.assign(
         object,
         measureTextBox(object, Math.max(object.size, deck.w * 0.85))
@@ -1280,6 +1259,8 @@ const clipboard = objectClipboard({
     });
   },
   capture() {
+    if (selectionScope === 'slides' || overview)
+      return captureSlides(deck, slideIds(), base, assets, documentId);
     const slide = active();
     const items = copiesOnSlide(slide.items, selectedIds(), (o) =>
       captureOfficeObject(o, slide, base)
@@ -1292,6 +1273,34 @@ const clipboard = objectClipboard({
     };
   },
   insert(clip) {
+    if (clip.slides) {
+      const picked = slideIds();
+      const at = deck.slides.findLastIndex((s) => picked.has(s.id)) + 1;
+      const slides = pasteSlides(
+        clip,
+        base,
+        assets,
+        documentId,
+        deck.slides[at - 1].sectionId
+      );
+      change(() => {
+        deck.slides.splice(at, 0, ...slides);
+        index = slideAnchor = at;
+        pickedSlides = new Set(slides.map((s) => s.id));
+        setSelection([]);
+        selectionScope = 'slides';
+        tool = 'pointer';
+        railSlides.reveal(active());
+        overviewSlides.reveal(active());
+        pinPosition = null;
+        pinning = false;
+      });
+      $(
+        overview ? '.sorter .active' : '.rail .select-slide.active'
+      )?.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    if (overview) return;
     validateOfficeCopies(clip.items, base);
     const items = structuredClone(clip.items);
     const offset =
@@ -1334,15 +1343,14 @@ mediaEditor.bind($('.stage'));
 function insertText(point) {
   finishText();
   const creation = { before: snapshot(), selected: selectedIds() };
-  const size = 24,
-    height = size * singleLine;
+  const height = defaultTextSize * singleLine;
   const o = textItem(
     '',
     point.x,
     Math.max(0, point.y - height / 2),
     2,
     height,
-    size,
+    defaultTextSize,
     { font: 'Yu Gothic', autoWidth: true }
   );
   active().items.push(o);
@@ -1371,7 +1379,21 @@ function startText(event) {
     object: o,
     event: event?.clientX !== undefined ? event : null,
     finish: finishText,
-    onInput: status,
+    onInput() {
+      if (o.autoWidth) {
+        for (const [key, dim] of [
+          ['w', 'width'],
+          ['h', 'height'],
+        ]) {
+          const field = $('#properties [data-field="' + key + '"]');
+          if (field)
+            field.value = +(parseFloat(item.style[dim]) * designUnit).toFixed(
+              2
+            );
+        }
+      }
+      status();
+    },
   });
 }
 function finishText(cancel = false, deselect = false, passive = false) {
@@ -1513,11 +1535,12 @@ async function allowReplace() {
 function reset(next, nextBase, nextTitle, nextPath) {
   const previous = base;
   const previousAssets = Object.values(assets);
+  documentId = uid();
   base = nextBase;
   overview = false;
+  selectionScope = 'canvas';
   commentDrafts.clear();
   railSlides.clear();
-  inspectorSlides.clear();
   overviewSlides.clear();
   pickedSlides.clear();
   slideAnchor = 0;
@@ -1671,7 +1694,7 @@ function bindSlideList(host, browser) {
     if (!tile) return;
     e.preventDefault();
     const i = Number(tile.dataset.slide);
-    if (!slideIds().has(deck.slides[i].id)) {
+    if (selectionScope !== 'slides' || !slideIds().has(deck.slides[i].id)) {
       chooseSlide(i, { detail: 1 });
     }
     execute('slideMenu', host.querySelector('[data-slide="' + i + '"]'));
@@ -1764,7 +1787,6 @@ bindLayerReordering(
 );
 bindSlideList($('.thumbs'), railSlides);
 bindSlideList($('.sorter'), overviewSlides);
-bindSlideList(inspectorSlideHost, inspectorSlides);
 function objectMenu(e) {
   if (
     busy ||
@@ -1966,7 +1988,8 @@ async function execute(id, button) {
     return;
   }
   if (!['fileMenu', 'slideMenu'].includes(id)) $('.menu')?.remove();
-  if (id === 'copyObjects') return clipboard.copy();
+  if (id === 'copyObjects' || id === 'copySlides') return clipboard.copy();
+  if (id === 'pasteSlides') return clipboard.paste(true);
   if (id === 'pasteObjects') return clipboard.paste();
   if (id === 'copyShareLink') return shareDocument();
   if (id === 'overview' || id === 'canvasView') {
@@ -2022,6 +2045,8 @@ async function execute(id, button) {
   }
   if (id === 'slideMenu') {
     menu(button, [
+      ['copySlides', 'Copy slides', 'copy', '⌘C'],
+      ['pasteSlides', 'Paste slides', 'paste', '⌘V'],
       ['newSection', 'Group in new section…', 'section'],
       ['moveSection', 'Move to section…', 'section'],
       [
@@ -2220,13 +2245,8 @@ async function execute(id, button) {
     );
     return;
   }
-  if (['layers', 'design', 'comments', 'slides'].includes(id)) {
+  if (['layers', 'design', 'comments'].includes(id)) {
     tab = id;
-    if (id === 'slides') {
-      selectionScope = 'slides';
-      setSelection([]);
-      drawSelection();
-    }
     pinning = false;
     pinPosition = null;
     properties();
@@ -2781,7 +2801,12 @@ $('.stage').addEventListener('dblclick', (e) => {
       e.preventDefault();
       return;
     }
-    if (!o || o.locked || o.kind === 'image' || o.kind === 'video') return;
+    if (o?.kind === 'image') {
+      e.preventDefault();
+      mediaEditor.cropImage(o);
+      return;
+    }
+    if (!o || o.locked || o.kind === 'video') return;
     if (o.kind === 'text' || o.text || o.placeholder) {
       e.preventDefault();
       startText(e);

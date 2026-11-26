@@ -26,6 +26,7 @@ import {
   parse,
   rawSlide,
   relative,
+  resolve,
   relfile,
   rels,
   rid,
@@ -142,6 +143,7 @@ function patchOriginal(n, o, old, reparented = false) {
   if (changed('name')) desc(n, 'cNvPr')?.setAttribute('name', o.name);
   if (
     reparented ||
+    (o.kind === 'group' && o.childBox.some((v, i) => v !== old.childBox[i])) ||
     ['x', 'y', 'w', 'h', 'rotation', 'flipH', 'flipV'].some(changed)
   ) {
     const parent =
@@ -165,6 +167,15 @@ function patchOriginal(n, o, old, reparented = false) {
         [ext, 'cy', o.h],
       ])
         el.setAttribute(k, emu(v));
+      if (o.kind === 'group') {
+        const childOff = ensure(xf, A, 'a:chOff', ext.nextElementSibling);
+        const childExt = ensure(xf, A, 'a:chExt', childOff.nextElementSibling);
+        const [x, y, w, h] = o.childBox;
+        childOff.setAttribute('x', emu(x));
+        childOff.setAttribute('y', emu(y));
+        childExt.setAttribute('cx', emu(w));
+        childExt.setAttribute('cy', emu(h));
+      }
       for (const key of ['flipH', 'flipV'])
         if (changed(key)) xf.setAttribute(key, o[key] ? '1' : '0');
       if (changed('rotation'))
@@ -485,7 +496,7 @@ export function exportDeck(deck, base, assets = {}) {
     /\/slideLayouts\/[^/]+\.xml$/.test(p)
   );
   for (const s of deck.slides) {
-    const old = base?.deck.slides.find((x) => x.id === s.id);
+    const old = base?.deck.slides.find((x) => x.id === (s.copyOf || s.id));
     if (s.relId) order.push(s.relId);
     if (old && JSON.stringify(s) === JSON.stringify(old)) continue;
     let path = s.source,
@@ -506,16 +517,30 @@ export function exportDeck(deck, base, assets = {}) {
       override.setAttribute('PartName', '/' + path);
       override.setAttribute('ContentType', slideType);
       types.documentElement.appendChild(override);
-      const layoutPath = xml[s.layoutPath] ? s.layoutPath : defaultLayout;
-      if (!layoutPath) throw Error('The slide layout is missing.');
-      sr = parse(rels([['rId1', 'slideLayout', relative(path, layoutPath)]]));
-      doc = parse(rawSlide(s.name, s.bg));
-      if (s.inheritBackground === s.bg) desc(doc, 'bg')?.remove();
       structure = true;
       typesChanged = true;
-    } else {
-      doc = parse(xml[path]);
-      sr = parse(xml[relfile(path)] || rels([]));
+    }
+    if (old?.source) {
+      doc = parse(xml[old.source]);
+      sr = parse(xml[relfile(old.source)] || rels([]));
+      if (s.copyOf) {
+        // Notes and comments are allocated anew by writeDocumentMetadata.
+        // The remaining relationships keep layout, animations, media and charts.
+        for (const r of children(sr.documentElement)) {
+          if (/\/(notesSlide|comments)$/.test(attr(r, 'Type'))) r.remove();
+          else if (attr(r, 'TargetMode') !== 'External')
+            r.setAttribute(
+              'Target',
+              relative(path, resolve(old.source, attr(r, 'Target')))
+            );
+        }
+        for (const ref of [...doc.getElementsByTagNameNS('*', 'commentRel')])
+          ref.remove();
+        const creation = desc(child(desc(doc, 'cSld'), 'extLst'), 'creationId');
+        if (creation?.hasAttribute('val'))
+          creation.setAttribute('val', parseInt(s.id.slice(0, 8), 16));
+        doc.documentElement.removeAttribute('show');
+      }
       if (s.bg !== old.bg) {
         const c = desc(doc, 'cSld'),
           bg = fragment(
@@ -526,6 +551,14 @@ export function exportDeck(deck, base, assets = {}) {
         else c.insertBefore(bg, c.firstElementChild);
       }
       if (s.name !== old.name) desc(doc, 'cSld').setAttribute('name', s.name);
+    } else {
+      const layoutPath = xml[s.layoutPath] ? s.layoutPath : defaultLayout;
+      if (!layoutPath) throw Error('The slide layout is missing.');
+      sr = parse(rels([['rId1', 'slideLayout', relative(path, layoutPath)]]));
+      doc = parse(rawSlide(s.name, s.bg));
+      if (s.inheritBackground === s.bg) desc(doc, 'bg')?.remove();
+      if (s.hideMasterShapes)
+        doc.documentElement.setAttribute('showMasterSp', '0');
     }
     const tree = desc(doc, 'spTree');
     let id = Math.max(

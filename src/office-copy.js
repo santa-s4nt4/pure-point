@@ -50,11 +50,13 @@ const documentId = (base) => base?.deck?.slides[0]?.id;
 // pasting within one deck. Fully inline tables and external links travel too.
 export function captureOfficeObject(o, slide, base) {
   if (o.officeCopy || !['table', 'unsupported'].includes(o.kind)) return;
-  const originalSlide = base?.deck?.slides.find((s) => s.id === slide.id);
+  const originalSlide = base?.deck?.slides.find(
+    (s) => s.id === (slide.copyOf || slide.id)
+  );
   if (!originalSlide?.source)
     throw Error(`The PowerPoint source for “${o.name}” is unavailable.`);
   const { xml } = base.parts;
-  const entry = indexSlide(originalSlide, xml).get(o.id);
+  const entry = indexSlide(originalSlide, xml).get(o.copyOf || o.id);
   if (!entry)
     throw Error(`Could not find “${o.name}” in its PowerPoint slide.`);
 

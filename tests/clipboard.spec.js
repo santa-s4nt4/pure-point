@@ -99,7 +99,7 @@ test('System text and screenshots paste as editable, undoable slide objects and 
   await expect(page.getByLabel('Font family', { exact: true })).toHaveValue(
     'Yu Gothic'
   );
-  await expect(page.getByLabel('Size (pt)', { exact: true })).toHaveValue('24');
+  await expect(page.getByLabel('Size (pt)', { exact: true })).toHaveValue('16');
   await expect(board.locator('.select-box')).toHaveCount(1);
   await page.keyboard.press('Meta+z');
   await expect(text).toHaveCount(0);

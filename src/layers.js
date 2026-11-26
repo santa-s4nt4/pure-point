@@ -43,6 +43,8 @@ export function layerEntries(items) {
 export function layerBounds(entry) {
   const o = entry.object,
     m = entry.transform.multiply(shapeTransform(o));
+  if (o.kind === 'group' && o.items.length)
+    return contentBounds(o, entry.transform.multiply(childTransform(o)));
   const corners = [
     [0, 0],
     [o.w, 0],
@@ -65,6 +67,45 @@ export function selectionBounds(entries) {
     boxes.flatMap((b) => [b.x, b.x + b.w]),
     boxes.flatMap((b) => [b.y, b.y + b.h])
   );
+}
+
+function contentBounds(group, transform) {
+  const visible = group.items.filter((item) => !item.hidden);
+  return selectionBounds(
+    (visible.length ? visible : group.items).map((object) => ({
+      object,
+      transform,
+    }))
+  );
+}
+
+// Change the group frame and its child coordinate box together so the
+// child-to-parent transform stays the same, even for rotated/flipped groups.
+export function fitGroup(group) {
+  if (!group.items.length) return;
+  const box = contentBounds(group, matrix());
+  const next = [box.x, box.y, Math.max(0.001, box.w), Math.max(0.001, box.h)];
+  if (next.every((v, i) => Math.abs(v - group.childBox[i]) < 1e-7)) return;
+  const center = childTransform(group).transformPoint({
+    x: box.x + next[2] / 2,
+    y: box.y + next[3] / 2,
+  });
+  const w = (next[2] * group.w) / group.childBox[2];
+  const h = (next[3] * group.h) / group.childBox[3];
+  Object.assign(group, {
+    x: center.x - w / 2,
+    y: center.y - h / 2,
+    w,
+    h,
+    childBox: next,
+  });
+}
+
+export function fitGroups(items) {
+  for (const group of items.filter((o) => o.kind === 'group')) {
+    fitGroups(group.items);
+    fitGroup(group);
+  }
 }
 
 // A parent and its child must not both receive a drag, delete, or nudge.
@@ -162,6 +203,7 @@ export function copiesOnSlide(items, selectedIds, prepare) {
   function detach(o) {
     prepare?.(o);
     delete o.source;
+    delete o.copyOf;
     delete o.officeId;
     delete o.placeholder;
     delete o.layoutOriginal;

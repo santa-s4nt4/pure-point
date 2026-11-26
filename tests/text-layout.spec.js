@@ -8,13 +8,21 @@ test('Text edits use the existing glyphs, stay editable through spacing changes,
     input = page.getByRole('textbox', { name: 'Slide text' });
   await board.dblclick({ position: { x: 110, y: 115 } });
   await expect(input).toBeFocused();
-  await expect(page.getByLabel('Size (pt)', { exact: true })).toHaveValue('24');
+  await expect(page.getByLabel('Size (pt)', { exact: true })).toHaveValue('16');
   await expect(page.getByLabel('Font family', { exact: true })).toHaveValue(
     'Yu Gothic'
   );
   await page.keyboard.insertText('Camera');
+  const initial = await input.boundingBox();
+  await page.keyboard.insertText(' lens');
+  expect((await input.boundingBox()).width).toBeGreaterThan(initial.width);
+  for (let i = 0; i < 5; i++) await input.press('Backspace');
+  expect((await input.boundingBox()).width).toBeCloseTo(initial.width, 1);
   await page.keyboard.press('Enter');
   await page.keyboard.insertText('geometry');
+  expect((await input.boundingBox()).height).toBeGreaterThan(
+    initial.height * 1.8
+  );
   await input.press('Meta+Enter');
   const body = board.locator('.item-text');
   await expect(body).toHaveText('Camera\ngeometry');

@@ -139,6 +139,13 @@ export function createPictureWriter({
         .firstElementChild,
       true
     );
+  function cropXML(crop) {
+    if (!crop?.some((v) => v)) return '';
+    const sides = ['l', 't', 'r', 'b'].map(
+      (side, i) => side + '="' + Math.round(crop[i] * 100000) + '"'
+    );
+    return '<a:srcRect ' + sides.join(' ') + '/>';
+  }
   function create(o, shapeId, xfrm) {
     const isVideo = o.kind === 'video',
       poster = rel(R + '/image', writeAsset(isVideo ? o.poster : o.asset));
@@ -146,13 +153,6 @@ export function createPictureWriter({
     if (isVideo) pending.add(String(shapeId));
     const link = isVideo
       ? '<a:hlinkClick r:id="" action="ppaction://media"/>'
-      : '';
-    const crop = o.crop?.some((x) => x)
-      ? '<a:srcRect ' +
-        ['l', 't', 'r', 'b']
-          .map((k, i) => k + '="' + Math.round(o.crop[i] * 100000) + '"')
-          .join(' ') +
-        '/>'
       : '';
     return (
       '<p:pic><p:nvPicPr><p:cNvPr id="' +
@@ -166,7 +166,7 @@ export function createPictureWriter({
       '</p:nvPr></p:nvPicPr><p:blipFill><a:blip r:embed="' +
       poster +
       '"/>' +
-      crop +
+      cropXML(o.crop) +
       '<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>' +
       xfrm +
       '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>'
@@ -174,6 +174,16 @@ export function createPictureWriter({
   }
   function patch(n, o, old) {
     if (!['image', 'video'].includes(o.kind)) return;
+    const crop = cropXML(o.crop);
+    if (crop !== cropXML(old.crop)) {
+      const fill = child(n, 'blipFill');
+      child(fill, 'srcRect')?.remove();
+      if (crop && fill)
+        fill.insertBefore(
+          makeNode(crop),
+          child(fill, 'blip')?.nextSibling || null
+        );
+    }
     if (
       o.asset === old.asset &&
       o.poster === old.poster &&
@@ -189,9 +199,6 @@ export function createPictureWriter({
       'r:embed',
       rel(R + '/image', writeAsset(isVideo ? o.poster : o.asset))
     );
-    // The new source's aspect ratio is independent of the previous crop.
-    if (!o.crop?.some((x) => x))
-      child(child(n, 'blipFill'), 'srcRect')?.remove();
     for (const ext of children(child(blip, 'extLst'), 'ext'))
       if (desc(ext, 'svgBlip') || desc(ext, 'webVideoPr')) ext.remove();
     if (!isVideo) return;

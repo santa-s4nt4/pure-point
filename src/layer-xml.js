@@ -73,7 +73,7 @@ export function syncLayerTree(tree, original, edited, create, patch, visit) {
   }
   function reconcile(parent, items) {
     const desired = items.map((o) => {
-      const prior = known.get(o.id);
+      const prior = known.get(o.copyOf || o.id);
       const node = prior?.node || create(o);
       nodes.add(node);
       retained.add(node);

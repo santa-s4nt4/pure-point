@@ -6,7 +6,7 @@ import { native, readCanvasClipboard } from './platform.js';
 // Native Edit > Copy/Paste and the macOS keyboard shortcuts send DOM clipboard
 // events to the webview. Keep media in its original store; only the selection
 // token and a human-readable text representation go on the system pasteboard.
-const mime = 'application/x-pure-point-objects';
+const mime = 'application/x-pure-point-clipboard';
 const isImage = (type) => /^image\/(png|jpeg|gif|webp)$/i.test(type);
 
 async function readBrowserClipboard() {
@@ -43,14 +43,18 @@ export function objectClipboard({
 }) {
   let clip;
   function copy(event) {
-    if (!available(event.target) || !event.clipboardData) return;
+    // Chromium can target a previously edited textarea after its selection
+    // loses focus. Route clipboard commands using the current focus owner.
+    if (!available(document.activeElement) || !event.clipboardData) return;
     let next;
     try {
       next = capture();
       if (!next) return;
       const token = uid();
-      const text = next.items.map((o) => o.text || o.name || o.kind).join('\n');
-      const html = `<span data-pure-point-objects="${token}">${esc(text)}</span>`;
+      const text =
+        next.text ??
+        next.items.map((o) => o.text || o.name || o.kind).join('\n');
+      const html = `<span data-pure-point-clipboard="${token}">${esc(text)}</span>`;
       event.clipboardData.setData('text/plain', text);
       event.clipboardData.setData('text/html', html);
       event.clipboardData.setData(mime, token);
@@ -66,15 +70,16 @@ export function objectClipboard({
     return (
       clip &&
       (data.token === clip.token ||
-        data.html?.includes(`data-pure-point-objects="${clip.token}"`))
+        data.html?.includes(`data-pure-point-clipboard="${clip.token}"`))
     );
   }
-  async function place(data, slide) {
+  async function place(data, slide, slidesOnly = false) {
     if (destination() !== slide || !available(document.activeElement)) return;
     if (isInternal(data)) {
-      insert(clip);
+      if (!slidesOnly || clip.slides) insert(clip);
       return;
     }
+    if (slidesOnly) return;
     const text = (data.text || '')
       .replace(/\r\n?/g, '\n')
       .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '');
@@ -82,7 +87,7 @@ export function objectClipboard({
       await insertExternal({ images: data.images, text }, slide);
   }
   function paste(event) {
-    if (!available(event.target)) return;
+    if (!available(document.activeElement)) return;
     const data = event.clipboardData;
     // DataTransfer is only readable during the paste event.
     let files = Array.from(data?.files || []);
@@ -123,13 +128,13 @@ export function objectClipboard({
     copy() {
       document.execCommand('copy');
     },
-    async paste() {
+    async paste(slidesOnly = false) {
       if (!available(document.activeElement)) return;
       const slide = destination();
       const data = native
         ? await readCanvasClipboard()
         : await readBrowserClipboard();
-      await place(data, slide);
+      await place(data, slide, slidesOnly);
     },
   };
 }

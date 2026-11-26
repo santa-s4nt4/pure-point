@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { native, pickFile, toData, releaseMovies } from './platform.js';
+import { chooseCrop, cropFrame } from './image-crop.js';
 import { shape, uid } from './model.js';
 import { onlineVideo, videoTypes } from './media-format.js';
 
@@ -344,22 +345,6 @@ export function createMediaEditor({
     });
   }
   function bind(stage) {
-    stage.addEventListener(
-      'dblclick',
-      async (e) => {
-        if (isBusy() || e.target.closest('[data-media-control]')) return;
-        const target = sourceAt(e.target);
-        if (target?.kind !== 'image') return;
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        try {
-          await replaceMedia(target);
-        } catch (err) {
-          fail(err);
-        }
-      },
-      true
-    );
     let hover;
     const clear = () => {
       hover?.classList.remove('media-drop-target');
@@ -421,6 +406,18 @@ export function createMediaEditor({
   }
   return {
     replaceMedia,
+    async cropImage(target) {
+      const deck = getDeck(),
+        slide = getSlide();
+      if (isBusy() || editableMedia(slide.items, target.id) !== target) return;
+      const crop = await chooseCrop(target, getAssets()[target.asset]);
+      if (
+        crop &&
+        stillActive(deck, slide) &&
+        editableMedia(slide.items, target.id) === target
+      )
+        change(() => Object.assign(target, cropFrame(target, crop)));
+    },
     insertImage: () => pick('image'),
     insertVideo: () => pick('video'),
     insertEmbed: () => pick('embed'),

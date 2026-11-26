@@ -118,3 +118,68 @@
   outline: 2px solid #5476ff;
   outline-offset: 1px;
 }
+
+dialog.crop-dialog {
+  width: min(680px, 92vw);
+  max-width: 92vw;
+}
+.crop-stage {
+  display: grid;
+  place-items: center;
+  height: min(52vh, 420px);
+  margin-top: 14px;
+  background: #e9eaee;
+  border-radius: 4px;
+}
+.crop-source {
+  position: relative;
+  isolation: isolate;
+  user-select: none;
+}
+.crop-source img,
+.crop-frame {
+  position: absolute;
+}
+.crop-source img {
+  pointer-events: none;
+}
+.crop-frame {
+  cursor: move;
+  touch-action: none;
+  border: 1px solid white;
+  box-shadow:
+    0 0 0 1px #222,
+    0 0 0 100vmax #10121a82;
+}
+.crop-source {
+  clip-path: inset(-7px);
+}
+.crop-frame button {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  background: white;
+  border: 2px solid #242631;
+  transform: translate(-50%, -50%);
+  touch-action: none;
+}
+.crop-frame [data-edge='n'],
+.crop-frame [data-edge='s'] {
+  cursor: ns-resize;
+}
+.crop-frame [data-edge='e'],
+.crop-frame [data-edge='w'] {
+  cursor: ew-resize;
+}
+.crop-frame [data-edge='nw'],
+.crop-frame [data-edge='se'] {
+  cursor: nwse-resize;
+}
+.crop-frame [data-edge='ne'],
+.crop-frame [data-edge='sw'] {
+  cursor: nesw-resize;
+}
+.crop-dialog .crop-reset {
+  margin-right: auto;
+}

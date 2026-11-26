@@ -126,7 +126,7 @@ test('YouTube and Vimeo embeds use isolated provider frames and persist in PPTX'
   expect(relationships).toContain('TargetMode="External"');
 });
 
-test('double-clicking an imported image replaces its source and retains its frame', async ({
+test('Crop an imported image, reopen the crop, and replace its source through Design', async ({
   page,
 }, info) => {
   await page.goto('/');
@@ -145,15 +145,65 @@ test('double-clicking an imported image replaces its source and retains its fram
   await pick(page, () => menu(page, 'open'), first);
   await expect(frame).not.toHaveAttribute('data-id', oldId);
   const originalBox = await frame.boundingBox();
-  await pick(page, () => frame.dblclick(), {
-    ...picture,
-    name: 'replacement.png',
-  });
+  await frame.dblclick();
+  const crop = page.getByRole('dialog', { name: 'Crop image' });
+  const leftEdge = crop.getByRole('button', { name: 'Crop left', exact: true });
+  const handle = await leftEdge.boundingBox();
+  const cropBox = await crop.locator('.crop-source').boundingBox();
+  await page.mouse.move(
+    handle.x + handle.width / 2,
+    handle.y + handle.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    handle.x + handle.width / 2 + cropBox.width / 4,
+    handle.y + handle.height / 2,
+    { steps: 4 }
+  );
+  await page.mouse.up();
+  await crop.getByRole('button', { name: 'Apply crop' }).click();
+  await expect
+    .poll(async () => (await frame.boundingBox()).width)
+    .toBeLessThan(originalBox.width);
+  const croppedBox = await frame.boundingBox();
+  expect(croppedBox.width / originalBox.width).toBeCloseTo(0.75, 2);
+  expect(croppedBox.x + croppedBox.width).toBeCloseTo(
+    originalBox.x + originalBox.width,
+    1
+  );
+  await page.keyboard.press('Meta+z');
+  expect(await frame.boundingBox()).toEqual(originalBox);
+  await page.keyboard.press('Meta+Shift+z');
+  const cropped = info.outputPath('cropped-image.pptx');
+  const parts = await exportFile(page, cropped);
+  const savedCrop = strFromU8(parts['ppt/slides/slide1.xml']).match(
+    /<a:srcRect l="(\d+)"/
+  );
+  expect(Number(savedCrop[1]) / 100000).toBeCloseTo(0.25, 2);
+  await pick(page, () => menu(page, 'open'), cropped);
+  await frame.dblclick();
+  await crop.getByRole('button', { name: 'Reset crop' }).click();
+  await crop.getByRole('button', { name: 'Cancel' }).click();
+  expect((await frame.boundingBox()).width).toBeCloseTo(croppedBox.width, 1);
+  await frame.click({ button: 'right' });
+  await expect(
+    page.getByRole('menuitem', { name: 'Replace image…' })
+  ).toBeVisible();
+  await page.keyboard.press('Escape');
+  await pick(
+    page,
+    () => page.locator('#properties [data-action=replaceMedia]').click(),
+    {
+      ...picture,
+      name: 'replacement.png',
+    }
+  );
   await expect
     .poll(() => page.locator('#status').textContent())
     .toMatch(/unsaved|changes|変更/i);
-  expect(await frame.boundingBox()).toEqual(originalBox);
+  expect((await frame.boundingBox()).width).toBeCloseTo(croppedBox.width, 1);
   const second = await exportFile(page, info.outputPath('second-image.pptx'));
+  expect(strFromU8(second['ppt/slides/slide1.xml'])).not.toContain('srcRect');
   expect(strFromU8(second['ppt/slides/slide1.xml'])).toContain(
     'replacement.png'
   );
@@ -241,4 +291,82 @@ test('Copying grouped media retains the movie until the last document closes and
     beforeClose: [],
     released: ['picture-fixture', 'fixture'],
   });
+});
+
+test('Slide copies keep cropped media and comment anchors after the original is removed', async ({
+  page,
+}) => {
+  await page.goto('/icon.png');
+  const results = await page.evaluate(async (png) => {
+    const { shape, blankDeck } = await import('/src/model.js');
+    const { exportDeck } = await import('/src/export.js');
+    const { importDeck } = await import('/src/import.js');
+    const { captureSlides, pasteSlides } =
+      await import('/src/slide-clipboard.js');
+    const asset = 'ppt/media/source.png';
+    const assets = { [asset]: 'data:image/png;base64,' + png };
+    const fixture = blankDeck();
+    const picture = shape('image', 'Cropped picture', 60, 30, 50, 50, {
+      asset,
+      crop: [0.15, 0.1, 0.35, 0],
+    });
+    const source = fixture.slides[0];
+    source.items.push(picture);
+    source.comments = [
+      {
+        id: crypto.randomUUID(),
+        text: 'Image note',
+        author: 'Reader',
+        createdAt: new Date().toISOString(),
+        objectId: picture.id,
+        x: 61,
+        y: 32,
+        offsetX: 1,
+        offsetY: 2,
+      },
+    ];
+    const parts = exportDeck(fixture, null, assets);
+    parts.media = assets;
+    const file = importDeck(parts);
+    const base = { ...file, parts, deck: structuredClone(file.deck) };
+    const original = file.deck.slides[0];
+    const clip = captureSlides(
+      file.deck,
+      new Set([original.id]),
+      base,
+      assets,
+      'source'
+    );
+    const dest = blankDeck();
+    return ['source', 'destination'].map((documentId) => {
+      const local = documentId === 'source';
+      const destAssets = local ? assets : {};
+      const deck = local ? file.deck : dest;
+      deck.slides = pasteSlides(
+        clip,
+        local ? base : null,
+        destAssets,
+        documentId,
+        null
+      );
+      const edit = exportDeck(deck, local ? base : null, destAssets);
+      const xml = { ...(local ? parts.xml : {}), ...edit.xml };
+      for (const path of edit.removed || []) delete xml[path];
+      const reopened = importDeck({ xml, media: destAssets }).deck.slides[0];
+      const image = reopened.items[0];
+      return {
+        crop: image.crop,
+        matches: destAssets[image.asset] === assets[asset],
+        independent: reopened.comments[0].id !== original.comments[0].id,
+        anchored: reopened.comments[0].objectId === image.id,
+      };
+    });
+  }, picture.buffer.toString('base64'));
+  for (const result of results)
+    expect(result).toEqual({
+      crop: [0.15, 0.1, 0.35, 0],
+      matches: true,
+      independent: true,
+      anchored: true,
+    });
 });

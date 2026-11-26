@@ -1,3 +1,4 @@
+import { fitGroup } from './layers.js';
 import { readNotes } from './notes.js';
 import { readContours, readLineStyle } from './vector-xml.js';
 import { readDocumentMetadata } from './document-metadata.js';
@@ -301,6 +302,7 @@ function readShape(n, ctx, index, layer, master) {
     obj.items = children(n)
       .map((s, i) => readShape(s, ctx, i))
       .filter(Boolean);
+    fitGroup(obj);
   }
   if (body) {
     const ph = desc(child(n, 'nvSpPr'), 'ph');

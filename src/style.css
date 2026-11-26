@@ -428,7 +428,10 @@ svg {
 }
 .group-content {
   position: absolute;
-  inset: 0;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
   transform-origin: 0 0;
 }
 .unsupported {
@@ -827,6 +830,9 @@ h3 {
   background: transparent;
   border: 0;
   caret-color: currentColor;
+}
+.artboard .point-text.text-edit {
+  outline: var(--hair) solid #394fef;
 }
 .artboard:has(.text-edit) .selection {
   display: none;

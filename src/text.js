@@ -1,9 +1,30 @@
+export const defaultTextSize = 16;
+
 // PowerPoint advances a single-spaced line by approximately 1.2 em. Store
 // percentages as native multiples and keep exact point leading as CSS pixels
 // in the slide's one-logical-pixel-per-point coordinate system.
 export const singleLine = 1.2;
 export const lineBox = (value) =>
   typeof value === 'string' ? value : (value || 1) * singleLine;
+
+// The caller supplies a detached text element carrying its runs and insets.
+export function measureTextElement(text, maxWidth) {
+  text.removeAttribute('contenteditable');
+  text.removeAttribute('role');
+  text.classList.remove('text-edit');
+  Object.assign(text.style, {
+    position: 'fixed',
+    visibility: 'hidden',
+    inset: '0 auto auto -100000px',
+    width: 'max-content',
+    height: 'max-content',
+  });
+  if (maxWidth !== undefined) text.style.maxWidth = maxWidth + 'px';
+  document.body.append(text);
+  const box = text.getBoundingClientRect();
+  text.remove();
+  return { w: box.width, h: box.height };
+}
 
 export function lineAdvance(value, size) {
   const height = lineBox(value);

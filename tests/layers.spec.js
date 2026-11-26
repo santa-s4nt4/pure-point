@@ -119,6 +119,21 @@ test('Layer and canvas selection, marquee, keyboard groups, visibility and lock'
   await expect(art.locator('.selection-outline')).toHaveCount(2);
   await page.keyboard.press('Meta+g');
   await expect(nodes).toHaveCount(1);
+  const childrenBox = await art
+    .locator('.group-content > .item')
+    .evaluateAll((children) => {
+      const rects = children.map((n) => n.getBoundingClientRect());
+      return [
+        Math.min(...rects.map((r) => r.left)),
+        Math.max(...rects.map((r) => r.right)),
+      ];
+    });
+  const groupBox = await art.locator('.select-box').boundingBox();
+  expect(groupBox.x).toBeCloseTo(childrenBox[0], 1);
+  expect(groupBox.x + groupBox.width).toBeCloseTo(childrenBox[1], 1);
+  await art.click({ position: { x: 10, y: 10 } });
+  await expect(art.locator('.select-box')).toHaveCount(0);
+  await art.locator('.group-content > .item').first().click();
   await page.keyboard.press('Meta+Shift+g');
   await expect(nodes).toHaveCount(2);
   const frame = await art.boundingBox(),
@@ -156,4 +171,60 @@ test('Layer and canvas selection, marquee, keyboard groups, visibility and lock'
     .getByRole('button', { name: 'Hide Square A', exact: true })
     .click();
   await expect(art.locator('.group-content > .item').first()).toBeHidden();
+});
+
+test('Padded PowerPoint groups fit their visible children without moving them, including after save', async ({
+  page,
+}) => {
+  await page.goto('/icon.png');
+  const result = await page.evaluate(async () => {
+    const { shape, blankDeck } = await import('/src/model.js');
+    const { exportDeck } = await import('/src/export.js');
+    const { importDeck } = await import('/src/import.js');
+    const { layerEntries, fitGroups, layerBounds } =
+      await import('/src/layers.js');
+    const child = shape('rect', 'Picture frame', 220, 110, 40, 25);
+    const g = shape('group', 'Padded', 150, 85, 200, 60, {
+      rotation: 27,
+      flipH: true,
+      childBox: [100, 80, 200, 120],
+      items: [child],
+    });
+    const d = blankDeck();
+    d.slides[0].items = [g];
+    const bounds = (items) => {
+      const entry = [...layerEntries(items).values()].find(
+        (e) => e.object.kind === 'rect'
+      );
+      return layerBounds(entry);
+    };
+    const original = bounds([g]);
+    const parts = exportDeck(d);
+    const file = importDeck(parts);
+    const base = { ...file, parts, deck: structuredClone(file.deck) };
+    const first = file.deck.slides[0].items[0];
+    const imported = bounds([first]);
+    first.items[0].w /= 2;
+    const edited = bounds([first]);
+    fitGroups([first]);
+    const changes = exportDeck(file.deck, base);
+    const reopened = importDeck({
+      xml: { ...parts.xml, ...changes.xml },
+      media: {},
+    }).deck.slides[0].items;
+    return {
+      original,
+      imported,
+      edited,
+      reloaded: bounds(reopened),
+      width: reopened[0].w,
+      height: reopened[0].h,
+    };
+  });
+  for (const key of ['x', 'y', 'w', 'h']) {
+    expect(result.imported[key]).toBeCloseTo(result.original[key], 5);
+    expect(result.reloaded[key]).toBeCloseTo(result.edited[key], 3);
+  }
+  expect(result.width).toBeCloseTo(20, 4);
+  expect(result.height).toBeCloseTo(12.5, 4);
 });

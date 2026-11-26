@@ -48,12 +48,12 @@ async function makeDeck(page) {
   );
 }
 
-test('Slide selections in the right pane use section and deletion shortcuts', async ({
+test('Slide selections in the navigator use section and deletion shortcuts', async ({
   page,
 }) => {
   await makeDeck(page);
-  await page.locator('[data-action=slides]').click();
-  const pages = page.locator('.inspector-slides');
+  await expect(page.locator('.inspector [data-action=slides]')).toHaveCount(0);
+  const pages = page.locator('.rail');
   await pages.locator('[data-slide="1"]').click();
   await pages.locator('[data-slide="2"]').click({ modifiers: ['Meta'] });
   await page.keyboard.press('Meta+g');
@@ -228,4 +228,62 @@ test('The same live paint controls edit slide backgrounds, strokes and inline te
   await expect(text).toHaveCSS('color', 'rgb(34, 68, 170)');
   await page.keyboard.press('Escape');
   await expect(text).toHaveText('Live text');
+});
+
+test('The navigator pastes independent slides in order, including notes and imported objects', async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await makeDeck(page);
+  const tiles = page.locator('.rail [data-slide]');
+  await page.locator('header [data-action=script]').click();
+  for (const [i, note] of ['First', 'Second', 'Third', 'Fourth'].entries()) {
+    await tiles.nth(i).click();
+    await page.getByLabel('Slide script').fill(note);
+  }
+  await tiles.nth(2).click();
+  await tiles.nth(0).click({ modifiers: ['Meta'] });
+  await page.keyboard.press('Meta+c');
+  await page.keyboard.press('Meta+v');
+  await expect(tiles).toHaveCount(6);
+  await expect(page.locator('.rail .chosen')).toHaveCount(2);
+  await expect(page.locator('.rail .active')).toHaveAttribute(
+    'data-slide',
+    '3'
+  );
+  await expect(page.locator('.artboard [data-id]')).toHaveCount(2);
+  await page.keyboard.press('Meta+z');
+  await expect(tiles).toHaveCount(4);
+  await page.keyboard.press('Meta+Shift+z');
+  await expect(tiles).toHaveCount(6);
+  await tiles.nth(3).click();
+  await page.getByLabel('Slide script').fill('Edited copy');
+  await tiles.nth(3).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: /Copy slides/ }).click();
+  await tiles.nth(5).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: /Paste slides/ }).click();
+  await expect(tiles).toHaveCount(7);
+  await page.locator('.p-menu').click();
+  const download = page.waitForEvent('download');
+  await page.locator('[data-action=saveAs]').click();
+  const stream = await (await download).createReadStream();
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  await openSlides(page, Buffer.concat(chunks));
+  for (const [i, note] of [
+    'First',
+    'Second',
+    'Third',
+    'Edited copy',
+    'Third',
+    'Fourth',
+    'Edited copy',
+  ].entries()) {
+    await tiles.nth(i).click();
+    await expect(page.getByLabel('Slide script')).toHaveValue(note);
+    await expect(page.locator('.artboard [data-id]')).toHaveCount(
+      [0, 3, 6].includes(i) ? 2 : 0
+    );
+  }
 });
