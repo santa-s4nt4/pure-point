@@ -123,3 +123,29 @@ test('Edits made while the ZIP is writing remain unsaved and undo to the saved r
   await expect(field).toHaveValue('First version');
   await expect(page.locator('header #status')).toHaveText('Saved');
 });
+
+test('Appearance follows the system and remembers an explicit override', async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/');
+  const appearance = page.getByRole('combobox', { name: 'Appearance' });
+  const rail = page.locator('.rail');
+  await expect(appearance).toHaveValue('system');
+  await expect(rail).toHaveCSS('background-color', 'rgb(35, 37, 43)');
+  const paper = page.locator('.artboard > .scene');
+  const background = await paper.evaluate(
+    (n) => getComputedStyle(n).backgroundColor
+  );
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(rail).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await appearance.selectOption('dark');
+  await page.reload();
+  await expect(appearance).toHaveValue('dark');
+  await expect(rail).toHaveCSS('background-color', 'rgb(35, 37, 43)');
+  await expect(paper).toHaveCSS('background-color', background);
+  await appearance.selectOption('light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(rail).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(page.locator('#status')).toHaveText('Not saved yet');
+});

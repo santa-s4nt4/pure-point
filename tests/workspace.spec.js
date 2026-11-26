@@ -123,3 +123,37 @@ test('Pinch preserves the canvas point, doubles create editable text, deck size 
   await art.locator('.item-text').dblclick({ force: true });
   await expect(entry).toBeVisible();
 });
+
+test('Dragging navigator slides uses a bounded preview of the moving selection', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const slides = page.locator('.rail [data-slide]');
+  for (let i = 0; i < 2; i++) {
+    await page.locator('.rail [data-action=addSlide]').click();
+    await page.locator('dialog [data-layout]').first().click();
+  }
+  await slides.nth(0).click();
+  await slides.nth(1).click({ modifiers: ['Shift'] });
+  const previews = await slides.evaluateAll((tiles) =>
+    tiles.map((tile) => {
+      const data = new DataTransfer();
+      let preview;
+      data.setDragImage = (element) => {
+        preview = {
+          cards: element.querySelectorAll('.drag-card > .scene').length,
+          count: element.querySelector('.drag-count')?.textContent,
+          width: element.getBoundingClientRect().width,
+        };
+      };
+      tile.dispatchEvent(
+        new DragEvent('dragstart', { bubbles: true, dataTransfer: data })
+      );
+      return preview;
+    })
+  );
+  expect(previews.map((p) => p.cards)).toEqual([2, 2, 1]);
+  expect(previews[0].count).toBe('2');
+  expect(previews[0].width).toBeLessThanOrEqual(165);
+  await expect(page.locator('.slide-drag-preview')).toHaveCount(0);
+});

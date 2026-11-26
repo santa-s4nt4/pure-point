@@ -22,6 +22,11 @@ export function workspace(action) {
     <div class="header-actions">
       <button type="button" class="share-link" data-action="copyShareLink" hidden>${icon('embed', 14)}<span>Share…</span></button>
       <div class="panel-toggles" role="group" aria-label="Workspace panels">${action('navigator', 'Toggle slide navigator', 'sidebar')}${action('script', 'Toggle script', 'script')}${action('inspector', 'Toggle inspector', 'panel')}</div>
+      <div class="appearance-control">
+        <select id="appearance" aria-label="Appearance" title="Appearance">
+          <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
+        </select>${icon('down', 11)}
+      </div>
     </div>
   </header>
   <main class="work">
@@ -40,6 +45,27 @@ export function workspace(action) {
     </section></div>
     <aside id="slide-inspector" class="inspector" aria-label="Inspector"><div class="inspect-tabs"><button class="tab active" data-action="design">Design</button><button class="tab" data-action="layers">Layers</button><button class="tab" data-action="comments">Comments</button></div><div id="properties"></div></aside>
   </main><footer class="footer"><div class="foot-left"><span id="slide-counter"></span></div><div class="foot-right">${action('canvasView', 'Slide view', 'slide')}${action('overview', 'Slide overview', 'overview')}<i class="divider"></i>${action('zoomOut', 'Zoom out', 'minus')}<select id="zoom" aria-label="Zoom"><option value="fit">Fit</option><option value="custom" hidden></option>${zoomStops.map((v) => `<option value="${v}">${Math.round(v * 100)}%</option>`).join('')}</select>${action('zoomIn', 'Zoom in', 'plus')}${action('fit', 'Zoom to fit', 'fit')}</div></footer>`;
+}
+
+export function bindAppearance(select) {
+  const key = 'pure-point.appearance';
+  const system = matchMedia('(prefers-color-scheme: dark)');
+  const saved = localStorage.getItem(key);
+  select.value = ['light', 'dark'].includes(saved) ? saved : 'system';
+  function apply() {
+    document.documentElement.dataset.theme =
+      select.value === 'system'
+        ? system.matches
+          ? 'dark'
+          : 'light'
+        : select.value;
+  }
+  select.addEventListener('change', () => {
+    localStorage.setItem(key, select.value);
+    apply();
+  });
+  system.addEventListener('change', apply);
+  apply();
 }
 
 export function animateLogo(canvas) {

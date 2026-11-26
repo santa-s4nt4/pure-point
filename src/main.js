@@ -33,9 +33,11 @@ import { captureOfficeObject, validateOfficeCopies } from './office-copy.js';
 import './style.css';
 import { createMediaEditor, readClipboardImages } from './media-editor.js';
 import './workspace.css';
+import './appearance.css';
 import {
   workspace,
   animateLogo,
+  bindAppearance,
   bindRailResize,
   bindPinch,
   zoomStops,
@@ -110,6 +112,7 @@ try {
 const root = $('#app');
 document.body.classList.toggle('native', platform.native);
 root.innerHTML = workspace(action);
+bindAppearance($('#appearance'));
 const designUnit = 2;
 const commentDrafts = new Map();
 const scriptField = $('#slide-script');
@@ -1725,6 +1728,7 @@ function bindSlideList(host, browser) {
       JSON.stringify(ids)
     );
     e.dataTransfer.effectAllowed = 'move';
+    browser.dragPreview(e, tile, ids);
   });
   host.addEventListener('dragover', (e) => {
     if (!e.dataTransfer.types.includes('application/x-pure-point-slides'))

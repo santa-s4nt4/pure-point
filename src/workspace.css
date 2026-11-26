@@ -514,3 +514,39 @@
   width: calc(12 * var(--hair));
   height: calc(12 * var(--hair));
 }
+
+.slide-drag-preview {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  contain: strict;
+  isolation: isolate;
+}
+.drag-card {
+  position: absolute;
+  overflow: hidden;
+  contain: paint;
+  border-radius: 3px;
+  background: white;
+}
+.drag-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid #818395;
+  border-radius: inherit;
+}
+.drag-count {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  border-radius: 9px;
+  background: #3639ad;
+  color: white;
+  padding: 1px 6px;
+  font-size: 11px;
+}
+.thumbs, .sorter {
+  user-select: none;
+  -webkit-user-select: none;
+}

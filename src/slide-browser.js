@@ -182,6 +182,60 @@ export function slideBrowser(host, { sorter = false } = {}) {
   return {
     render,
     highlight,
+    dragPreview(event, tile, ids) {
+      const { deck, assets } = state;
+      const front = deck.slides[Number(tile.dataset.slide)];
+      const selectedIds = new Set(ids);
+      const cards = [
+        front,
+        ...deck.slides
+          .filter((s) => s !== front && selectedIds.has(s.id))
+          .slice(0, 2),
+      ];
+      const rect = tile.querySelector('.thumb-frame').getBoundingClientRect();
+      const width = Math.min(160, rect.width);
+      const height = (width * deck.h) / deck.w;
+      const offset = (cards.length - 1) * 5;
+      const preview = el('div', 'slide-drag-preview');
+      preview.setAttribute('aria-hidden', 'true');
+      Object.assign(preview.style, {
+        left: rect.left + 'px',
+        top: rect.top + 'px',
+        width: width + offset + 'px',
+        height: height + offset + 'px',
+      });
+      for (let i = cards.length - 1; i >= 0; i--) {
+        const card = el('div', 'drag-card');
+        Object.assign(card.style, {
+          width: width + 'px',
+          height: height + 'px',
+          left: i * 5 + 'px',
+          top: i * 5 + 'px',
+        });
+        const content = scene(cards[i], deck, assets);
+        content.style.transform = `scale(${width / deck.w})`;
+        card.append(content);
+        preview.append(card);
+      }
+      if (ids.length > 1) {
+        const count = el('span', 'drag-count');
+        count.textContent = ids.length;
+        preview.append(count);
+      }
+      document.body.append(preview);
+      event.dataTransfer.setDragImage(
+        preview,
+        Math.max(
+          0,
+          Math.min(width, ((event.clientX - rect.left) * width) / rect.width)
+        ),
+        Math.max(
+          0,
+          Math.min(height, ((event.clientY - rect.top) * height) / rect.height)
+        )
+      );
+      requestAnimationFrame(() => preview.remove());
+    },
     toggleSection(id) {
       id = id || null;
       if (collapsed.has(id)) collapsed.delete(id);
