@@ -84,7 +84,7 @@ The UI tests use the installed Google Chrome. The browser development surface st
 
 ## macOS releases
 
-Pushing a version tag such as `v0.3.4` runs the editor and Rust tests, builds an Apple Silicon and Intel universal app, and publishes `pure-point-macOS.zip` to GitHub Releases. If GitHub reports it could not allocate the Apple Silicon build runner, the release is retried once. The workflow can also be run manually from Actions to download a build artifact. Release bundles use an ad-hoc signature.
+Each push to `main` runs the editor and Rust tests, builds an Apple Silicon and Intel universal app, and publishes `pure-point-macOS.zip` to GitHub Releases. After a successful build, Actions tags the tested commit. The patch version increases by the first-parent commit distance since the base version in `package.json` was set. Rerunning a commit reuses its version. If GitHub reports it could not allocate the Apple Silicon build runner, the release is retried once. The workflow can also be run manually from Actions to download a build artifact. Release bundles use an ad-hoc signature.
 
 If GitHub interrupts publication, the publisher retries and reuses any uploaded ZIP with the same SHA-256. To recover a previous tag build while its artifact is still available, open **Actions → macOS release → Run workflow**, select `main`, and enter the original run ID in `recover_run_id`. The workflow verifies the build and tag, then publishes the original ZIP.
 
