@@ -1,6 +1,5 @@
 import { mediaMime } from './media-format.js';
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 export const native = isTauri();
 export const fileName = (path) =>
@@ -25,7 +24,10 @@ export async function readCanvasClipboard() {
   return { html: data.html, text: data.text, images };
 }
 export async function nativeEvents(callback) {
-  if (native) await listen('editor-command', (e) => callback(e.payload));
+  if (native)
+    await getCurrentWindow().listen('editor-command', (e) =>
+      callback(e.payload)
+    );
 }
 export async function pickFile(accept) {
   const input = document.createElement('input');
@@ -44,13 +46,23 @@ export const toData = (file) =>
     r.onerror = no;
     r.readAsDataURL(file);
   });
-export async function openPackage(incoming) {
-  if (native) return invoke('open_document', { incoming });
-  if (incoming) return;
-  const f = await pickFile('.pptx');
-  if (!f) return;
+export async function openPackage() {
+  if (native) return invoke('open_document');
+  const params = new URLSearchParams(location.hash.slice(1));
+  const token = params.get('open');
+  if (!token || !/^[a-f0-9-]+$/i.test(token)) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  const url = 'blob:' + location.origin + '/' + token;
+  let bytes;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw Error('Could not read the presentation.');
+    bytes = await response.arrayBuffer();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
   const { unzipSync, strFromU8 } = await import('fflate');
-  const raw = unzipSync(new Uint8Array(await f.arrayBuffer())),
+  const raw = unzipSync(new Uint8Array(bytes)),
     parts = { xml: {}, media: {} };
   for (const [k, v] of Object.entries(raw)) {
     if (/\.(xml|rels)$/i.test(k)) parts.xml[k] = strFromU8(v);
@@ -58,7 +70,7 @@ export async function openPackage(incoming) {
       parts.media[k] = await toData(new Blob([v], { type: mediaMime(k) }));
     }
   }
-  return { path: f.name, id: null, parts, raw };
+  return { path: params.get('name') || 'untitled.pptx', id: null, parts, raw };
 }
 export async function savePackage(base, path, name, changes) {
   if (native)
@@ -121,8 +133,40 @@ export async function release(
 }
 export const dirtyFlag = (dirty) =>
   native ? invoke('set_dirty', { dirty }) : Promise.resolve();
-export const quit = () => native && invoke('finish_quit');
-export const setTitle = (title) => native && getCurrentWindow().setTitle(title);
+export async function openWindow(pick) {
+  if (native) return invoke('new_document_window', { pick });
+  const file = pick && (await pickFile('.pptx'));
+  if (pick && !file) return;
+  const url = new URL(location.href);
+  const blob = file && URL.createObjectURL(file);
+  url.hash = file
+    ? new URLSearchParams({ open: blob.split('/').pop(), name: file.name })
+    : 'new';
+  const child = window.open(url, '_blank', 'popup');
+  if (child) {
+    child.opener = null;
+    return;
+  }
+  // Some browsers end user activation in the system file picker. The link
+  // lets the same chosen file open from a fresh, trusted click.
+  const dialog = document.createElement('dialog');
+  dialog.className = 'modal';
+  dialog.innerHTML =
+    '<h3>Open in a new window</h3><div class="buttons"><button class="top-action">Cancel</button><a class="top-action primary" target="_blank" rel="noopener">Open window</a></div>';
+  const link = dialog.querySelector('a');
+  link.href = url;
+  link.onclick = () => dialog.close('open');
+  dialog.querySelector('button').onclick = () => dialog.close();
+  dialog.onclose = () => {
+    if (blob && dialog.returnValue !== 'open') URL.revokeObjectURL(blob);
+    dialog.remove();
+  };
+  document.body.append(dialog);
+  dialog.showModal();
+}
+export const closeWindow = (quitting) => invoke('finish_close', { quitting });
+export const setTitle = (title) =>
+  native ? getCurrentWindow().setTitle(title) : (document.title = title);
 export const fullScreen = (on) =>
   native
     ? getCurrentWindow().setFullscreen(on)

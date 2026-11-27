@@ -16,6 +16,7 @@ import {
   shapePanel,
   vectorDrawing,
 } from './vector-view.js';
+import { calloutTip } from './shape-presets.js';
 import { anchorAt, refreshCommentPositions } from './comment-anchors.js';
 import {
   alignments,
@@ -33,6 +34,8 @@ import {
 } from './clipboard-media.js';
 import { captureOfficeObject, validateOfficeCopies } from './office-copy.js';
 import './style.css';
+import { bindNumberFields } from './number-fields.js';
+import { editCrop } from './image-crop.js';
 import { createMediaEditor, readClipboardImages } from './media-editor.js';
 import './workspace.css';
 import './appearance.css';
@@ -62,7 +65,7 @@ import {
 } from './layers.js';
 import { layerPanel, toggleExpanded } from './layer-panel.js';
 import { defaultTextSize, measureTextElement, singleLine } from './text.js';
-import { layoutOptions } from './slide-layouts.js';
+import { layoutOptions, setTitleSpacing } from './slide-layouts.js';
 import { chooseLayout } from './layout-picker.js';
 import { inlineText } from './inline-text.js';
 import { blankDeck, hasTextFrame, slide, textItem, uid } from './model.js';
@@ -97,7 +100,9 @@ let tool = 'pointer',
   grid = { ...defaults },
   busy = true,
   present = false,
-  editor = null;
+  editor = null,
+  cropEdit = null;
+let numberAdjustment = null;
 let history = [],
   future = [],
   currentRevision = 0,
@@ -311,6 +316,7 @@ function snapshot() {
   };
 }
 function record(before) {
+  if (numberAdjustment) return;
   fitGroups(active().items);
   refreshCommentPositions(active());
   history.push(before);
@@ -325,7 +331,7 @@ function record(before) {
   status();
 }
 function change(fn) {
-  const before = snapshot();
+  const before = numberAdjustment?.before || snapshot();
   fn();
   record(before);
   render();
@@ -347,7 +353,9 @@ function restore(from, to) {
 }
 function status() {
   shareButton.disabled = busy || Boolean(sharingPath);
-  const dirty = currentRevision !== savedRevision || Boolean(editor?.changed());
+  const dirty =
+    currentRevision !== savedRevision ||
+    Boolean(editor?.changed() || cropEdit?.changed());
   if (dirty !== lastDirty) {
     lastDirty = dirty;
     platform.dirtyFlag(dirty);
@@ -657,6 +665,22 @@ function drawSelection() {
   for (const entry of entries) layer.append(frame(entry));
   if (entries.length === 1) {
     const box = layer.firstElementChild;
+    const entry = entries[0],
+      o = entry.object;
+    if (o.kind === 'callout' && o.w > 0 && o.h > 0) {
+      const tip = calloutTip(o);
+      const point = entry.transform.multiply(shapeTransform(o)).transformPoint({
+        x: (tip.x * o.w) / 1000,
+        y: (tip.y * o.h) / 1000,
+      });
+      const handle = el('i', 'callout-tip');
+      handle.title = 'Drag callout tip';
+      Object.assign(handle.style, {
+        left: point.x + 'px',
+        top: point.y + 'px',
+      });
+      layer.append(handle);
+    }
     for (const [name, x, y] of [
       ['nw', 0, 0],
       ['ne', 100, 0],
@@ -686,10 +710,11 @@ function drawSelection() {
   sc.append(layer);
 }
 function renderBoard() {
+  if (cropEdit) finishCrop();
   loadSlideFonts(active());
   const sc = scene(active(), deck, assets, true);
-  if (grid.visible) sc.append(gridOverlay(deck, grid));
   $('.artboard').replaceChildren(sc);
+  if (grid.visible) $('.artboard').append(gridOverlay(deck, grid));
   $('.stage').classList.toggle('tool-mode', tool !== 'pointer');
   drawSelection();
   commentPins();
@@ -885,6 +910,7 @@ function textButtons(o) {
     .join('');
 }
 function properties() {
+  if (numberAdjustment) return;
   const o = selected(),
     container = $('#properties');
   document
@@ -1062,6 +1088,10 @@ function properties() {
   }
 }
 function render(refreshPreview = true) {
+  if (numberAdjustment) {
+    renderBoard();
+    return;
+  }
   updateChrome();
   renderThumbs(refreshPreview);
   renderBoard();
@@ -1144,7 +1174,8 @@ function updateObject(key, value) {
   );
   if (o[key] === value && !mixed) return;
   const editing = editor?.o === o ? editor : null;
-  const before = editing?.creation?.before || snapshot();
+  const before =
+    editing?.creation?.before || numberAdjustment?.before || snapshot();
   const mark = editing?.remember();
   if (editing) {
     const text = editing.read();
@@ -1160,6 +1191,11 @@ function updateObject(key, value) {
   const intrinsic =
     o.autoWidth && (runStyle || paragraphStyle) && measureTextBox(o);
   o[key] = value;
+  if (o.kind === 'callout') {
+    if (key === 'cornerRadius') o.calloutShape = value ? 'roundRect' : 'rect';
+    if (key === 'calloutShape' && value === 'rect' && o.cornerRadius > 0)
+      o.calloutShape = 'roundRect';
+  }
   if (key === 'font') {
     o.eastAsianFont = value;
     o.fontCharset = o.eastAsianCharset = '';
@@ -1385,6 +1421,56 @@ const mediaEditor = createMediaEditor({
   isBusy: () => busy,
 });
 mediaEditor.bind($('.stage'));
+function startCrop() {
+  const entry = selectedEntries()[0];
+  if (
+    cropEdit ||
+    !entry ||
+    entry.locked ||
+    entry.hidden ||
+    entry.object.kind !== 'image'
+  )
+    return;
+  const item = $('.artboard [data-id="' + entry.object.id + '"]');
+  cropEdit = editCrop({
+    entry,
+    item,
+    assets,
+    coordinates,
+    finish: finishCrop,
+    onDirty: status,
+  });
+}
+function finishCrop(apply = true, keepInspector = false) {
+  if (!cropEdit) return;
+  const entry = layerEntries(active().items).get(cropEdit.object.id);
+  const changes = cropEdit.close(apply);
+  cropEdit = null;
+  if (!entry || !changes) {
+    status();
+    return;
+  }
+  const before = snapshot();
+  Object.assign(entry.object, changes);
+  record(before);
+  refreshCanvasItem(entry);
+  drawSelection();
+  renderThumbs();
+  commentPins();
+  if (!keepInspector) properties();
+  else
+    for (const key of ['x', 'y', 'w', 'h']) {
+      const field = $('#properties [data-field="' + key + '"]');
+      if (field) field.value = +(entry.object[key] * dimension(key)).toFixed(2);
+    }
+}
+function refreshCanvasItem(entry) {
+  while (entry.parent) entry = entry.parent;
+  const o = entry.object;
+  $('.artboard [data-id="' + o.id + '"]')?.replaceWith(
+    itemNode(o, assets, true)
+  );
+}
 function insertText(point) {
   finishText();
   const creation = { before: snapshot(), selected: selectedIds() };
@@ -1424,6 +1510,19 @@ function startText(event) {
     object: o,
     event: event?.clientX !== undefined ? event : null,
     finish: finishText,
+    toLocal(point) {
+      const bounds = item.getBoundingClientRect();
+      const transform = entry.transform.multiply(shapeTransform(o));
+      const delta = localDelta(
+        transform,
+        (point.x - bounds.x - bounds.width / 2) / scale,
+        (point.y - bounds.y - bounds.height / 2) / scale
+      );
+      return {
+        x: parseFloat(item.style.width) / 2 + delta.x,
+        y: parseFloat(item.style.height) / 2 + delta.y,
+      };
+    },
     onInput() {
       if (o.autoWidth) {
         for (const [key, dim] of [
@@ -1462,17 +1561,23 @@ function finishText(cancel = false, deselect = false, passive = false) {
   }
   activeEditor.close();
   if (deselect) setSelection([]);
-  if (passive) {
-    renderThumbs();
-    renderBoard();
-    status();
-  } else render();
+  // Preserve other canvas hit targets across the two clicks of a double-click.
+  const entry = layerEntries(active().items).get(o.id);
+  if (entry) refreshCanvasItem(entry);
+  else activeEditor.input.closest('.item')?.remove();
+  drawSelection();
+  renderThumbs();
+  commentPins();
+  if (!passive) properties();
+  status();
 }
 // Canvas pointer handlers normally prevent the browser's focus change. Commit
 // first so clicking empty space can release both the caret and the selection.
 document.addEventListener(
   'pointerdown',
   (e) => {
+    if (!e.target.closest('.crop-source,.crop-actions'))
+      finishCrop(true, !!e.target.closest('#properties'));
     if (!editor || editor.input.contains(e.target)) return;
     if (editor.composing) {
       editor.input.blur();
@@ -1486,6 +1591,17 @@ document.addEventListener(
       editor.remember();
       return;
     }
+    if (
+      e.target
+        .closest('label.field')
+        ?.querySelector(
+          '[data-field="size"],[data-field="cornerRadius"],[data-field="letterSpacing"]'
+        )
+    ) {
+      editor.remember();
+      return;
+    }
+    if (e.target.closest('.callout-tip')) return;
     if (e.target.closest('.stage')) finishText(false, true);
     else {
       // Keep the clicked navigator or command mounted until its click handler runs.
@@ -1561,7 +1677,7 @@ async function save(as) {
   toast('Presentation saved.');
   return true;
 }
-async function allowReplace() {
+async function allowClose() {
   finishText();
   if (currentRevision === savedRevision) return true;
   const result = await dialog(
@@ -1573,7 +1689,9 @@ async function allowReplace() {
       ['save', 'Save'],
     ]
   );
-  return result === 'save' ? await save(false) : result === 'discard';
+  if (result === 'save')
+    return (await save(false)) && currentRevision === savedRevision;
+  return result === 'discard';
 }
 function reset(next, nextBase, nextTitle, nextPath) {
   const previous = base;
@@ -1608,14 +1726,19 @@ function reset(next, nextBase, nextTitle, nextPath) {
 async function newDocument() {
   const file = await openTemplate();
   if (!file) {
-    reset(blankDeck(), null, 'untitled', null);
+    const next = blankDeck();
+    if (platform.native || location.hash === '#new')
+      next.slides = [layoutOptions(null, next, next.slides[0])[0].slide];
+    reset(next, null, 'untitled', null);
     return;
   }
   try {
     const imported = importDeck(file.parts);
+    const original = structuredClone(imported.deck);
+    imported.deck.slides.forEach(setTitleSpacing);
     reset(
       imported.deck,
-      { ...file, ...imported, deck: structuredClone(imported.deck) },
+      { ...file, ...imported, deck: original },
       'untitled',
       null
     );
@@ -1901,6 +2024,7 @@ function objectMenu(e) {
   menu(row || $('.artboard'), rows, { x: e.clientX, y: e.clientY });
 }
 $('.stage').addEventListener('contextmenu', objectMenu);
+$('.stage').addEventListener('drop', () => finishCrop(), true);
 $('#properties').addEventListener('contextmenu', objectMenu);
 bindPinch($('.stage'), zoomAt);
 if (platform.native)
@@ -1957,13 +2081,12 @@ $('.stage').addEventListener(
   true
 );
 
-async function open(incoming) {
+async function openInitialFile() {
   let file;
   try {
-    file = await platform.openPackage(incoming);
-    if (!file) return;
+    file = await platform.openPackage();
+    if (!file) return false;
     const loaded = importDeck(file.parts);
-    if (!(await allowReplace())) return;
     reset(
       loaded.deck,
       { ...file, ...loaded, deck: structuredClone(loaded.deck) },
@@ -1971,6 +2094,7 @@ async function open(incoming) {
       file.path
     );
     file = null;
+    return true;
   } finally {
     if (file) await platform.release(file);
   }
@@ -2018,6 +2142,7 @@ async function showPresentation(on) {
   } catch {}
 }
 async function execute(id, button) {
+  finishCrop();
   closeColorPicker();
   if (busy || document.querySelector('dialog[open]')) return;
   const sectionId = $('.menu')?.dataset.sectionId;
@@ -2135,7 +2260,7 @@ async function execute(id, button) {
       'save',
       'saveAs',
       'open',
-      'incoming',
+      'close',
       'new',
       'quit',
       'pdf',
@@ -2149,14 +2274,18 @@ async function execute(id, button) {
     status();
     try {
       if (id === 'save' || id === 'saveAs') await save(id === 'saveAs');
-      if (id === 'open' || id === 'incoming') await open(id === 'incoming');
-      if (id === 'new' && (await allowReplace())) await newDocument();
+      if (id === 'open' || id === 'new')
+        await platform.openWindow(id === 'open');
       if (id === 'pdf') {
         deck.slides.filter((slide) => !slide.hidden).forEach(loadSlideFonts);
         if (await exportPDF(deck, base, assets, fileTitle()))
           toast('PDF exported.');
       }
-      if (id === 'quit' && (await allowReplace())) await platform.quit();
+      if ((id === 'close' || id === 'quit') && (await allowClose())) {
+        await clipboard.dispose();
+        await platform.release(base, Object.values(assets));
+        await platform.closeWindow(id === 'quit');
+      }
       if (id === 'tool-image') await mediaEditor.insertImage();
       if (id === 'tool-video') await mediaEditor.insertVideo();
       if (id === 'tool-embed') await mediaEditor.insertEmbed();
@@ -2164,10 +2293,6 @@ async function execute(id, button) {
       savingDocument = false;
       busy = false;
       status();
-      if (ready && incomingQueued) {
-        incomingQueued = false;
-        queueMicrotask(() => run('incoming'));
-      }
     }
     return;
   }
@@ -2246,7 +2371,7 @@ async function execute(id, button) {
     return;
   }
   if (id === 'cropImage') {
-    await mediaEditor.cropImage(selected());
+    startCrop();
     return;
   }
   if (id === 'replaceMedia') {
@@ -2423,6 +2548,27 @@ document.addEventListener('click', (e) => {
     updateGrid('type', p.dataset.preset);
   }
 });
+bindNumberFields($('#properties'), {
+  available: () => !busy,
+  begin(input) {
+    numberAdjustment = {
+      before: input.dataset.scope === 'grid' ? null : snapshot(),
+    };
+  },
+  preview(input) {
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  },
+  finish(input) {
+    const { before } = numberAdjustment;
+    numberAdjustment = null;
+    if (before && before.deck !== JSON.stringify(deck)) record(before);
+    renderThumbs();
+    properties();
+    $(
+      '#properties input[aria-label="' + CSS.escape(input.ariaLabel) + '"]'
+    )?.focus({ preventScroll: true });
+  },
+});
 document.addEventListener('change', (e) => {
   if (busy) return;
   const input = e.target;
@@ -2493,7 +2639,7 @@ $('.stage').addEventListener('pointerdown', (e) => {
     busy ||
     e.button !== 0 ||
     e.target.closest(
-      '.floating-tools,textarea,.text-edit,.sorter,.comment-pin,.video-controls,[data-media-control],.media-controls,iframe'
+      '.crop-source,.crop-actions,.floating-tools,textarea,.text-edit,.sorter,.comment-pin,.video-controls,[data-media-control],.media-controls,iframe'
     )
   )
     return;
@@ -2525,6 +2671,23 @@ $('.stage').addEventListener('pointerdown', (e) => {
       };
       $('.stage').setPointerCapture(e.pointerId);
     }
+    return;
+  }
+  if (e.target.closest('.callout-tip')) {
+    finishText();
+    const entry = selectedEntries()[0];
+    if (entry?.object.kind !== 'callout' || entry.locked) return;
+    const o = entry.object;
+    drag = {
+      id: e.pointerId,
+      mode: 'callout-tip',
+      start: p,
+      moved: false,
+      o,
+      inverse: entry.transform.multiply(shapeTransform(o)).inverse(),
+      initial: { x: o.calloutX, y: o.calloutY },
+    };
+    e.preventDefault();
     return;
   }
   const pointHandle = e.target.closest('[data-vertex]');
@@ -2667,10 +2830,19 @@ window.addEventListener('pointermove', (e) => {
   if (!drag.moved) {
     if (Math.hypot(dx, dy) * scale < 3) return;
     // A simple click selects a layer without making a document undo entry.
-    if (drag.mode === 'objects' || drag.mode === 'vertex')
+    if (['objects', 'vertex', 'callout-tip'].includes(drag.mode))
       drag.before = snapshot();
     drag.moved = true;
     $('.stage').setPointerCapture(e.pointerId);
+  }
+  if (drag.mode === 'callout-tip') {
+    const { o, inverse, initial } = drag;
+    const delta = inverse.transformPoint({ x: dx, y: dy, w: 0 });
+    o.calloutX = Math.round((initial.x ?? -20833) + (100000 * delta.x) / o.w);
+    o.calloutY = Math.round((initial.y ?? 62500) + (100000 * delta.y) / o.h);
+    refreshCanvasItem(selectedEntries()[0]);
+    drawSelection();
+    return;
   }
   if (drag.mode === 'draw-vector' || drag.mode === 'vertex') {
     const snap = grid.snap && !e.altKey && !e.shiftKey;
@@ -2828,6 +3000,15 @@ function endDrag(e, cancel) {
       addObject(d.draft);
     return;
   }
+  if (d.mode === 'callout-tip') {
+    if (d.moved) {
+      if (cancel)
+        Object.assign(d.o, { calloutX: d.initial.x, calloutY: d.initial.y });
+      else record(d.before);
+      render();
+    }
+    return;
+  }
   if (d.mode === 'vertex') {
     if (d.moved) {
       if (cancel) {
@@ -2860,7 +3041,7 @@ $('.stage').addEventListener('dblclick', (e) => {
   const n = e.target.closest('[data-id]');
   if (
     e.target.closest(
-      'textarea,.text-edit,.comment-pin,.floating-tools,.sorter'
+      '.crop-source,.crop-actions,textarea,.text-edit,.comment-pin,.floating-tools,.sorter'
     ) ||
     busy
   )
@@ -2885,11 +3066,16 @@ $('.stage').addEventListener('dblclick', (e) => {
     });
     return;
   }
-  if (e.target.closest('[data-vertex]')) return;
+  if (e.target.closest('[data-vertex],.callout-tip,[data-handle]')) return;
   if (n) {
     select(n.dataset.id);
     const o = selected();
-    if (o?.kind === 'callout' && !o.locked) {
+    if (
+      o &&
+      !o.locked &&
+      (o.kind === 'callout' ||
+        (hasTextFrame(o) && e.target.closest('.item-text')))
+    ) {
       e.preventDefault();
       startText(e);
       return;
@@ -2903,7 +3089,7 @@ $('.stage').addEventListener('dblclick', (e) => {
     }
     if (o?.kind === 'image') {
       e.preventDefault();
-      mediaEditor.cropImage(o);
+      startCrop();
       return;
     }
     if (!o || o.locked || o.kind === 'video') return;
@@ -2919,6 +3105,16 @@ document.addEventListener('keydown', (e) => {
       'input,textarea,select,[contenteditable="true"]'
     ),
     cmd = e.metaKey || e.ctrlKey;
+  if (cropEdit && !cmd) {
+    if (
+      e.key === 'Escape' ||
+      (e.key === 'Enter' && !e.target.closest('.crop-actions'))
+    ) {
+      e.preventDefault();
+      finishCrop(e.key === 'Enter');
+    }
+    return;
+  }
   if (present) {
     if (
       [
@@ -3145,7 +3341,12 @@ document.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('beforeunload', (e) => {
-  if (!platform.native && currentRevision !== savedRevision) {
+  if (
+    !platform.native &&
+    (currentRevision !== savedRevision ||
+      editor?.changed() ||
+      cropEdit?.changed())
+  ) {
     e.preventDefault();
     e.returnValue = '';
   }
@@ -3176,29 +3377,14 @@ const initialFonts = platform
     visible.forEach(loadSlideFonts);
   })
   .catch(fail);
-let ready = false,
-  incomingQueued = false;
-platform
-  .nativeEvents((id) => {
-    if (id === 'incoming' && (!ready || busy)) {
-      incomingQueued = true;
-      return;
-    }
-    run(id);
-  })
-  .then(async () => {
-    busy = true;
-    try {
-      await Promise.all([newDocument(), initialFonts]);
-    } catch (err) {
-      await fail(err);
-    } finally {
-      busy = false;
-      ready = true;
-      status();
-    }
-    if (platform.native || incomingQueued) {
-      incomingQueued = false;
-      await run('incoming');
-    }
-  });
+platform.nativeEvents(run).then(async () => {
+  try {
+    if (!(await openInitialFile())) await newDocument();
+    await initialFonts;
+  } catch (err) {
+    await fail(err);
+  } finally {
+    busy = false;
+    status();
+  }
+});

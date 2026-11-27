@@ -417,6 +417,7 @@ svg {
   line-height: 1.16;
   pointer-events: none;
 }
+.artboard [data-id] > .item-text { pointer-events: auto; }
 .item-text > div,
 .item-text li {
   position: relative;
@@ -754,35 +755,16 @@ h3 {
   inset: 0;
   pointer-events: none;
 }
-.grid-overlay .band,
-.grid-overlay i,
-.guide-line {
-  position: absolute;
-  pointer-events: none;
-}
-.vertical,
-.grid-overlay .v,
-.guide-line.v {
-  height: 100%;
-  top: 0;
-}
-.horizontal,
-.grid-overlay .h,
-.guide-line.h {
+.grid-overlay {
   width: 100%;
-  left: 0;
+  height: 100%;
+  shape-rendering: crispEdges;
 }
-.band {
-  background: #596fff12;
-}
-.grid-overlay .v {
-  width: var(--hair);
-  background: #687ded65;
-}
-.grid-overlay .h {
-  height: var(--hair);
-  background: #687ded65;
-}
+.grid-overlay rect { fill: #596fff12; }
+.grid-overlay path { fill: none; stroke: #687dedaa; stroke-width: 1px; }
+.guide-line { position: absolute; pointer-events: none; }
+.guide-line.v { top: 0; height: 100%; }
+.guide-line.h { left: 0; width: 100%; }
 .select-box {
   position: absolute;
   border: var(--hair) solid #394fef;
@@ -1056,3 +1038,16 @@ h3 {
   padding: 5px 12px;
   float: right;
 }
+
+.text-edit.glyph-caret-active { caret-color: transparent; }
+.glyph-caret {
+  position: absolute;
+  pointer-events: none;
+  width: var(--hair, 1px);
+  animation: caret-blink 1s steps(1, end) infinite;
+}
+@keyframes caret-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .glyph-caret { animation: none; } }
+
+.field:has(input[type='number']) { cursor: ew-resize; touch-action: none; }
+#properties.scrubbing, #properties.scrubbing * { cursor: ew-resize; user-select: none; }

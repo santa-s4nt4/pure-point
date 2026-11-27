@@ -251,6 +251,13 @@ export function layoutPatches(deck, xml) {
   }
   return changes;
 }
+export function setTitleSpacing(slide) {
+  for (const o of slide.items) {
+    if (!['ctrTitle', 'title'].includes(o.placeholder?.type)) continue;
+    o.lineHeight = 1.5;
+    for (const p of o.paragraphs || []) p.lineHeight = 1.5;
+  }
+}
 export function layoutOptions(base, deck, current) {
   const parts = base?.parts || template(),
     presPath = base?.presPath || 'ppt/presentation.xml';
@@ -309,6 +316,7 @@ export function layoutOptions(base, deck, current) {
       delete obj.officeId;
       obj.layoutOriginal = structuredClone(obj);
     }
+    setTitleSpacing(s);
     return { label: def.label, slide: s };
   });
 }

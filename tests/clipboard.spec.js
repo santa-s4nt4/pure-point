@@ -1,3 +1,4 @@
+import { openFileWindow } from './document-window.js';
 import { expect, test } from '@playwright/test';
 
 test('Copy and paste selected objects and groups across slides as one undoable edit', async ({
@@ -138,12 +139,17 @@ test('System text and screenshots paste as editable, undoable slide objects and 
   await (await saved).saveAs(output);
   await expect(page.locator('#status')).toHaveText('Saved');
   await page.locator('.p-menu').click();
-  const opened = page.waitForEvent('filechooser');
-  await page.getByRole('menuitem', { name: /Open presentation/ }).click();
-  await (await opened).setFiles(output);
+  page = await openFileWindow(page, output, () =>
+    page.getByRole('menuitem', { name: /Open presentation/ }).click()
+  );
   await expect(page.locator('.doc-name')).toHaveText('clipboard.pptx');
-  await expect(text).toHaveText(lines, { useInnerText: true });
-  await expect(image).toHaveAttribute('src', imageData);
+  await expect(page.locator('.artboard .item-text')).toHaveText(lines, {
+    useInnerText: true,
+  });
+  await expect(page.locator('.artboard .image-clip img')).toHaveAttribute(
+    'src',
+    imageData
+  );
 });
 
 test('Canvas Paste reads the current system clipboard before the first object copy', async ({

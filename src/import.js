@@ -332,6 +332,7 @@ function readShape(n, ctx, index, layer, master) {
       attr(desc(layer, 'ph'), 'type', 'obj')
     );
     const title = ['title', 'ctrTitle'].includes(placeholder);
+    if (title && obj.placeholder) obj.placeholder.type ??= placeholder;
     const masterStyle = desc(
       ctx.master,
       title ? 'titleStyle' : desc(n, 'ph') ? 'bodyStyle' : 'otherStyle'
@@ -405,6 +406,7 @@ function readShape(n, ctx, index, layer, master) {
           : textStyle(child(p, 'endParaRPr'), base, ctx.theme),
         before: space('spcBef'),
         after: space('spcAft'),
+        level: Number(attr(pp, 'lvl', 0)),
         margin: indent('marL'),
         marginRight: indent('marR'),
         indent: indent('indent'),

@@ -171,8 +171,11 @@ export function patchVector(node, o, old, fragment) {
   const doc = sp.ownerDocument;
   if (
     vectorKinds.has(o.kind) &&
-    (o.kind !== old.kind || o.cornerRadius !== old.cornerRadius ||
+    (o.kind !== old.kind ||
+      o.cornerRadius !== old.cornerRadius ||
       o.calloutShape !== old.calloutShape ||
+      o.calloutX !== old.calloutX ||
+      o.calloutY !== old.calloutY ||
       JSON.stringify(o.contours) !== JSON.stringify(old.contours))
   ) {
     const geometry = fragment(doc, geometryXML(o)),

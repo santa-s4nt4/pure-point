@@ -1,7 +1,7 @@
 {
   "identifier": "editor",
   "description": "Editor window",
-  "windows": ["main"],
+  "windows": ["main", "document-*"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

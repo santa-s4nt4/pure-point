@@ -70,7 +70,7 @@ function rectangleNodes(o, rounded) {
 }
 
 // Coordinates use the DrawingML adjustment handles, relative to the center.
-function calloutTip(o) {
+export function calloutTip(o) {
   return point(
     500 + (o.calloutX ?? -20833) / 100,
     500 + (o.calloutY ?? 62500) / 100

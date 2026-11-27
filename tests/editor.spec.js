@@ -1,3 +1,4 @@
+import { openFileWindow } from './document-window.js';
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { unzipSync, strFromU8 } from 'fflate';
@@ -14,17 +15,13 @@ async function download(page, path) {
   await (await ready).saveAs(path);
 }
 async function openFixture(page, path) {
-  const ready = page.waitForEvent('filechooser');
-  await menuAction(page, 'open');
-  await (await ready).setFiles(path);
-  await expect(page.locator('#status')).toHaveText('Saved');
+  return openFileWindow(page, path, () => menuAction(page, 'open'));
 }
 
 test('編集、グリッドへの吸着、PPTXへの保存と再読み込み', async ({
   page,
 }, info) => {
   await page.goto('/');
-  await menuAction(page, 'new');
   await expect(page.locator('.select-slide')).toHaveCount(1);
   await page.locator('[data-preset="thirds"]').click();
   const art = page.locator('.artboard'),
@@ -66,8 +63,10 @@ test('編集、グリッドへの吸着、PPTXへの保存と再読み込み', a
   await expect(page.locator('.select-slide')).toHaveCount(1);
   const path = info.outputPath('editor.pptx');
   await download(page, path);
-  await openFixture(page, path);
-  await expect(art.locator('.item-text')).toHaveText('文字組み & layout');
+  page = await openFixture(page, path);
+  await expect(page.locator('.artboard .item-text')).toHaveText(
+    '文字組み & layout'
+  );
   const parts = unzipSync(await readFile(path));
   const slide = strFromU8(parts['ppt/slides/slide1.xml']);
   expect(slide).toContain('x="4064000" y="2286000"');
@@ -84,14 +83,14 @@ test('元部品の保持とスライドの並び替え・削除', async ({ page 
   await page.getByRole('button', { name: 'header title', exact: true }).click();
   const original = info.outputPath('source.pptx');
   await download(page, original);
-  await openFixture(page, original);
+  page = await openFixture(page, original);
   await page.locator('.select-slide').nth(1).click({ button: 'right' });
   await page.locator('[data-action="slideUp"]').click();
   await page.locator('.select-slide').last().click({ button: 'right' });
   await page.locator('[data-action="deleteSlide"]').click();
   const target = info.outputPath('reordered.pptx');
   await download(page, target);
-  await openFixture(page, target);
+  page = await openFixture(page, target);
   await expect(page.locator('.select-slide')).toHaveCount(2);
   await expect(page.locator('.thumb-num').first()).toHaveText('1');
   const a = unzipSync(await readFile(original)),

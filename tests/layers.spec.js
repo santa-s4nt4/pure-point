@@ -1,3 +1,4 @@
+import { openFileWindow } from './document-window.js';
 import { expect, test } from '@playwright/test';
 
 test('Grouping reuses source XML and preserves shape IDs, visibility and locks', async ({
@@ -101,11 +102,7 @@ test('Layer and canvas selection, marquee, keyboard groups, visibility and lock'
     );
     return Array.from(zipSync(files));
   });
-  const picker = page.waitForEvent('filechooser');
-  await page.keyboard.press('Meta+o');
-  await (
-    await picker
-  ).setFiles({
+  page = await openFileWindow(page, {
     name: 'layers.pptx',
     mimeType:
       'application/vnd.openxmlformats-officedocument.presentationml.presentation',

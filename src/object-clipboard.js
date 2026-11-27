@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { uid } from './model.js';
 import { esc } from './xml.js';
 import { releaseClipboardMedia } from './clipboard-media.js';
@@ -42,6 +43,43 @@ export function objectClipboard({
   onError,
 }) {
   let clip;
+  const broker =
+    !native && typeof SharedWorker !== 'undefined'
+      ? new SharedWorker(new URL('./clipboard-worker.js', import.meta.url)).port
+      : null;
+  function publish(copy) {
+    if (native) {
+      const media = [
+        ...new Set(
+          Object.values(copy.media?.assets || {})
+            .map((a) => a?.token)
+            .filter(Boolean)
+        ),
+      ];
+      return invoke('store_selection', {
+        token: copy.token,
+        json: JSON.stringify(copy),
+        media,
+      });
+    }
+    broker?.postMessage({ copy });
+    return Promise.resolve();
+  }
+  async function readSelection(token) {
+    if (native) {
+      const json = await invoke('read_selection', { token });
+      return json && JSON.parse(json);
+    }
+    if (!broker) return null;
+    const { port1, port2 } = new MessageChannel();
+    return new Promise((resolve) => {
+      port1.onmessage = ({ data }) => {
+        port1.close();
+        resolve(data);
+      };
+      broker.postMessage({ token }, [port2]);
+    });
+  }
   function copy(event) {
     // Chromium can target a previously edited textarea after its selection
     // loses focus. Route clipboard commands using the current focus owner.
@@ -61,23 +99,35 @@ export function objectClipboard({
       event.preventDefault();
       releaseClipboardMedia(clip?.media).catch(onError);
       clip = { ...next, token };
+      publish(clip).catch(onError);
     } catch (error) {
       releaseClipboardMedia(next?.media).catch(onError);
       onError(error);
     }
   }
-  function isInternal(data) {
+  function selectionToken(data) {
     return (
-      clip &&
-      (data.token === clip.token ||
-        data.html?.includes(`data-pure-point-clipboard="${clip.token}"`))
+      data.token ||
+      data.html?.match(/data-pure-point-clipboard="([a-f0-9-]+)"/i)?.[1]
     );
   }
   async function place(data, slide, slidesOnly = false) {
-    if (destination() !== slide || !available(document.activeElement)) return;
-    if (isInternal(data)) {
-      if (!slidesOnly || clip.slides) insert(clip);
-      return;
+    const canPaste = () =>
+      destination() === slide && available(document.activeElement);
+    if (!canPaste()) return;
+    const token = selectionToken(data);
+    if (token) {
+      const local = token === clip?.token;
+      const copy = local ? clip : await readSelection(token);
+      if (copy) {
+        try {
+          if (canPaste() && (!slidesOnly || copy.slides)) insert(copy);
+        } finally {
+          if (!local) await releaseClipboardMedia(copy.media);
+        }
+        return;
+      }
+      if (!canPaste()) return;
     }
     if (slidesOnly) return;
     const text = (data.text || '')
@@ -105,14 +155,14 @@ export function objectClipboard({
     const hasFiles = files.length > 0 || data?.types.includes('Files');
     const fileUrls = /^file:/im.test(data?.getData('text/uri-list') || '');
     const hasContent =
-      isInternal(transfer) ||
+      selectionToken(transfer) ||
       transfer.images.length > 0 ||
       (transfer.text && !hasFiles && !fileUrls);
     // Finder can advertise a file selection with only a thumbnail visible to WebKit.
     const readNative =
       native &&
       event.isTrusted &&
-      !isInternal(transfer) &&
+      !selectionToken(transfer) &&
       (!hasContent || fileUrls || transfer.images.length < files.length);
     if (!readNative && !hasContent) return;
     event.preventDefault();
@@ -125,6 +175,7 @@ export function objectClipboard({
   document.addEventListener('copy', copy);
   document.addEventListener('paste', paste);
   return {
+    dispose: () => releaseClipboardMedia(clip?.media),
     copy() {
       document.execCommand('copy');
     },

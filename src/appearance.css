@@ -60,7 +60,7 @@
   border-color: var(--line);
   color: #e6e7ec;
 }
-[data-theme='dark'] :is(.sorter, .crop-stage) {
+[data-theme='dark'] .sorter {
   background-color: var(--canvas);
 }
 [data-theme='dark']

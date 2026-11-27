@@ -1,3 +1,4 @@
+import { openFileWindow } from './document-window.js';
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { strFromU8, unzipSync } from 'fflate';
@@ -11,10 +12,6 @@ async function drag(page, start, end) {
 
 async function blank(page) {
   await page.goto('/');
-  await page
-    .getByRole('button', { name: 'Document menu', exact: true })
-    .click();
-  await page.locator('.menu [data-action=new]').click();
   const art = page.locator('.artboard');
   const box = await art.boundingBox(),
     scale = box.width / 960;
@@ -82,11 +79,10 @@ test('Drag to draw, edit a Bézier path, and round-trip dashed connectors with a
   expect(xml).toContain('<a:prstDash val="dash"');
   expect(xml).toContain('<a:headEnd type="oval"');
   expect(xml).toContain('<a:tailEnd type="triangle"');
-  const picker = page.waitForEvent('filechooser');
-  await page.keyboard.press('Meta+o');
-  await (await picker).setFiles(path);
-  await expect(art.locator('.is-line')).toHaveCount(1);
-  await art.locator('.is-line .line-hit').click();
+  page = await openFileWindow(page, path);
+  const reopenedArt = page.locator('.artboard');
+  await expect(reopenedArt.locator('.is-line')).toHaveCount(1);
+  await reopenedArt.locator('.is-line .line-hit').click();
   await expect(page.getByLabel('Start arrow', { exact: true })).toHaveValue(
     'oval'
   );
@@ -133,8 +129,8 @@ test('Design edits the whole curve or a selected point and keeps the handles on 
   await page.locator('[data-action=tool-line]').click();
   await drag(page, at(150, 250), at(600, 250));
   const line = art.locator('.is-line .line-hit');
-  const pointOnLine = () =>
-    line.evaluate((path) => {
+  const pointOnLine = (path = line) =>
+    path.evaluate((path) => {
       const middle = path
         .getPointAtLength(path.getTotalLength() / 2)
         .matrixTransform(path.getScreenCTM());
@@ -173,15 +169,18 @@ test('Design edits the whole curve or a selected point and keeps the handles on 
     /<p:cxnSp>.*?<a:cubicBezTo>.*?<a:tailEnd type="stealth"/s
   );
   const originalId = await art.locator('.is-line').getAttribute('data-id');
-  const open = page.waitForEvent('filechooser');
-  await page.keyboard.press('Meta+o');
-  await (await open).setFiles(pptx);
-  await expect(art.locator('.is-line')).not.toHaveAttribute('data-id', originalId);
-  await expect(line).toHaveAttribute('d', /C/);
-  const reopened = await pointOnLine();
+  page = await openFileWindow(page, pptx);
+  const reopenedArt = page.locator('.artboard');
+  await expect(reopenedArt.locator('.is-line')).not.toHaveAttribute(
+    'data-id',
+    originalId
+  );
+  const reopenedLine = reopenedArt.locator('.is-line .line-hit');
+  await expect(reopenedLine).toHaveAttribute('d', /C/);
+  const reopened = await pointOnLine(reopenedLine);
   await page.mouse.dblclick(reopened.x, reopened.y);
-  await art.locator('.vertex-handle[data-vertex="0"]').click();
-  await expect(amount).toHaveValue(percent);
+  await reopenedArt.locator('.vertex-handle[data-vertex="0"]').click();
+  await expect(page.getByLabel('Curvature (%)')).toHaveValue(percent);
   await expect(page.getByLabel('End arrow', { exact: true })).toHaveValue(
     'stealth'
   );

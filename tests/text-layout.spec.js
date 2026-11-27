@@ -1,3 +1,4 @@
+import { openFileWindow } from './document-window.js';
 import { test, expect } from '@playwright/test';
 
 test('Text edits use the existing glyphs, stay editable through spacing changes, and release selection outside', async ({
@@ -96,11 +97,14 @@ test('Shift H types in multiline point text and flips the object after editing',
   await page.keyboard.press('Meta+Shift+s');
   const path = info.outputPath('mirrored.pptx');
   await (await download).saveAs(path);
-  const picker = page.waitForEvent('filechooser');
-  await page.keyboard.press('Meta+o');
-  await (await picker).setFiles(path);
-  await expect(frame.locator('[data-paragraph]')).toHaveText(['', '二行目', 'H']);
-  await expect(frame).toHaveCSS('transform', 'matrix(-1, 0, 0, 1, 0, 0)');
+  page = await openFileWindow(page, path);
+  const reopened = page.locator('.artboard .item[data-id]');
+  await expect(reopened.locator('[data-paragraph]')).toHaveText([
+    '',
+    '二行目',
+    'H',
+  ]);
+  await expect(reopened).toHaveCSS('transform', 'matrix(-1, 0, 0, 1, 0, 0)');
 });
 
 test('Slide layout choices create PowerPoint placeholders and reuse the selected native layout on reopen', async ({
@@ -141,6 +145,9 @@ test('Slide layout choices create PowerPoint placeholders and reuse the selected
           s.layoutPath,
           s.items.map((o) => [o.placeholder?.type || 'obj', o.text, o.w > 0]),
         ]),
+      titleSpacing: snapshot.deck.slides
+        .slice(1)
+        .map((s) => s.items[0].paragraphs[0].lineHeight),
       count: relationships(
         parts.xml,
         'ppt/slideMasters/slideMaster1.xml'
@@ -161,6 +168,7 @@ test('Slide layout choices create PowerPoint placeholders and reuse the selected
     'title and content',
   ]);
   expect(result.options.every((o) => o[2] === false)).toBe(true);
+  expect(result.titleSpacing).toEqual([1.5, 1.5, 1.5]);
   expect(result.count).toBe(4);
   expect(result.options.map((o) => o[1])).toEqual(result.deck.map((s) => s[0]));
   expect(result.deck.map((s) => s[1])).toEqual([
@@ -253,4 +261,43 @@ test('PowerPoint preserves tracking, percentage/fixed leading, and unrelated ric
     tracking: [[1.25, 1.25], [1.25]],
     pdf: true,
   });
+});
+
+test('Double-clicking an overflowing text line edits that box, and wide leading keeps the caret at glyph height', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const board = page.locator('.artboard');
+  const editor = page.getByRole('textbox', { name: 'Slide text' });
+  await board.dblclick({ position: { x: 160, y: 130 } });
+  await page.keyboard.insertText('First');
+  await editor.press('Enter');
+  await page.keyboard.insertText('Second');
+  await editor.press('Meta+Enter');
+  const height = page.getByLabel('Height (px)', { exact: true });
+  await height.fill('14');
+  await height.press('Enter');
+  await page.getByLabel('Line spacing', { exact: true }).selectOption('2');
+  const point = await board.locator('.item-text').evaluate((n) => {
+    const text = n.firstElementChild.firstChild;
+    const range = new Range();
+    range.setStart(text, 6);
+    range.setEnd(text, 12);
+    const r = range.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+  await page.mouse.dblclick(point.x, point.y);
+  await expect(board.locator('[data-id]')).toHaveCount(1);
+  await expect(editor).toBeFocused();
+  expect(
+    await editor.evaluate(() => getSelection().anchorNode.textContent)
+  ).toBe('Second');
+  const caret = board.locator('.glyph-caret');
+  await expect(caret).toBeVisible();
+  expect(await caret.evaluate((n) => parseFloat(n.style.height))).toBe(16);
+  expect(
+    await editor.evaluate((n) => parseFloat(getComputedStyle(n).lineHeight))
+  ).toBeGreaterThan(32);
+  await editor.press('Shift+ArrowRight');
+  await expect(caret).toBeHidden();
 });

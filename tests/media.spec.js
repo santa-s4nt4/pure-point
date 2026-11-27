@@ -1,3 +1,4 @@
+import { openFileWindow } from './document-window.js';
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -39,7 +40,7 @@ test('local movies play, seek and survive PowerPoint save/open plus a dropped re
     () => page.locator('[data-action="tool-video"]').click(),
     movie
   );
-  const surface = page.locator('.artboard .video-surface');
+  let surface = page.locator('.artboard .video-surface');
   await expect(surface).toHaveCount(1);
   await surface.hover();
   await surface.getByRole('button', { name: 'Play video' }).click();
@@ -65,7 +66,8 @@ test('local movies play, seek and survive PowerPoint save/open plus a dropped re
   expect(body).toContain('<p:video>');
   expect(body).toContain('p14:media');
   const oldId = await surface.locator('..').getAttribute('data-id');
-  await pick(page, () => menu(page, 'open'), first);
+  page = await openFileWindow(page, first, () => menu(page, 'open'));
+  surface = page.locator('.artboard .video-surface');
   await expect(surface.locator('..')).not.toHaveAttribute('data-id', oldId);
   const before = await surface.locator('..').boundingBox();
   const bytes = (await readFile(movie)).toString('base64');
@@ -135,22 +137,24 @@ test('Crop an imported image, reopen the crop, and replace its source through De
     () => page.locator('[data-action="tool-image"]').click(),
     picture
   );
-  const frame = page
-    .locator('.artboard .item')
-    .filter({ has: page.locator('.image-clip') })
-    .first();
+  const imageFrame = () =>
+    page.locator('.artboard .item:has(.image-clip)').first();
+  let frame = imageFrame();
   const first = info.outputPath('first-image.pptx');
   await exportFile(page, first);
   const oldId = await frame.getAttribute('data-id');
-  await pick(page, () => menu(page, 'open'), first);
+  page = await openFileWindow(page, first, () => menu(page, 'open'));
+  frame = imageFrame();
   await expect(frame).not.toHaveAttribute('data-id', oldId);
   const originalBox = await frame.boundingBox();
   await frame.click();
   await page.getByRole('button', { name: 'Crop image…' }).click();
-  const crop = page.getByRole('dialog', { name: 'Crop image' });
+  const crop = page
+    .locator('.artboard')
+    .getByRole('group', { name: 'Crop image' });
   const leftEdge = crop.getByRole('button', { name: 'Crop left', exact: true });
   const handle = await leftEdge.boundingBox();
-  const cropBox = await crop.locator('.crop-source').boundingBox();
+  const cropBox = await crop.boundingBox();
   await page.mouse.move(
     handle.x + handle.width / 2,
     handle.y + handle.height / 2
@@ -162,7 +166,8 @@ test('Crop an imported image, reopen the crop, and replace its source through De
     { steps: 4 }
   );
   await page.mouse.up();
-  await crop.getByRole('button', { name: 'Apply crop' }).click();
+  await page.locator('.artboard').click({ position: { x: 20, y: 20 } });
+  await expect(crop).toHaveCount(0);
   await expect
     .poll(async () => (await frame.boundingBox()).width)
     .toBeLessThan(originalBox.width);
@@ -181,17 +186,18 @@ test('Crop an imported image, reopen the crop, and replace its source through De
     /<a:srcRect l="(\d+)"/
   );
   expect(Number(savedCrop[1]) / 100000).toBeCloseTo(0.25, 2);
-  await pick(page, () => menu(page, 'open'), cropped);
+  page = await openFileWindow(page, cropped, () => menu(page, 'open'));
+  frame = imageFrame();
   await frame.dblclick();
-  await crop.getByRole('button', { name: 'Reset crop' }).click();
-  await crop.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'Reset crop' }).click();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect((await frame.boundingBox()).width).toBeCloseTo(croppedBox.width, 1);
   await frame.click({ button: 'right' });
   await expect(
     page.getByRole('menuitem', { name: 'Replace image…' })
   ).toBeVisible();
   await page.getByRole('menuitem', { name: 'Crop image…' }).click();
-  await crop.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await pick(
     page,
     () => page.locator('#properties [data-action=replaceMedia]').click(),

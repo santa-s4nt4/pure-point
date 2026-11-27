@@ -1,3 +1,4 @@
+import { openFileWindow } from './document-window.js';
 import { test, expect } from '@playwright/test';
 import { strFromU8, unzipSync } from 'fflate';
 import { readFile } from 'node:fs/promises';
@@ -70,10 +71,7 @@ test('Empty content places the caret at the body indent, and Enter continues or 
     ['Second', '•'],
     ['Plain paragraph', true],
   ]);
-  const file = page.waitForEvent('filechooser');
-  await page.locator('.p-menu').click();
-  await page.locator('.menu [data-action=open]').click();
-  await (await file).setFiles(path);
+  page = await openFileWindow(page, path);
   await page.locator('.rail [data-slide="1"]').click();
   await expect(page.locator('.artboard li')).toHaveCount(2);
 });
@@ -237,4 +235,58 @@ test('Speaker notes create native linked notes pages, reuse a master, and preser
     cleared: ['', 'Second slide'],
     footer: true,
   });
+});
+
+test('Tab and Shift-Tab adjust only selected paragraphs and persist their PowerPoint indentation', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const board = page.locator('.artboard'),
+    editor = page.getByRole('textbox', { name: 'Slide text' });
+  await board.dblclick({ position: { x: 100, y: 70 } });
+  await page.keyboard.insertText('One');
+  await editor.press('Enter');
+  await page.keyboard.insertText('Two');
+  await editor.press('Enter');
+  await page.keyboard.insertText('Three');
+  await editor.press('Meta+Enter');
+  await board.locator('.item').dblclick();
+  await editor.evaluate((n) => {
+    const rows = n.querySelectorAll('div');
+    getSelection().setBaseAndExtent(
+      rows[1].firstChild,
+      1,
+      rows[2].firstChild,
+      2
+    );
+  });
+  await editor.press('Tab');
+  await editor.press('Tab');
+  await editor.press('Shift+Tab');
+  await expect(editor).toBeFocused();
+  expect(await editor.evaluate(() => getSelection().toString())).toContain(
+    'wo'
+  );
+  await editor.press('Meta+Enter');
+  const downloaded = page.waitForEvent('download');
+  await page.keyboard.press('Meta+Shift+s');
+  const zip = unzipSync(await readFile(await (await downloaded).path()));
+  const xml = strFromU8(zip['ppt/slides/slide1.xml']);
+  const rows = await page.evaluate(
+    (xml) =>
+      [
+        ...new DOMParser()
+          .parseFromString(xml, 'application/xml')
+          .getElementsByTagNameNS('*', 'pPr'),
+      ].map((p) => [
+        Number(p.getAttribute('lvl')),
+        Number(p.getAttribute('marL')),
+      ]),
+    xml
+  );
+  expect(rows).toEqual([
+    [0, 0],
+    [1, 304800],
+    [1, 304800],
+  ]);
 });

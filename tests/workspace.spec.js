@@ -1,3 +1,4 @@
+import { openFileWindow } from './document-window.js';
 import { test, expect } from '@playwright/test';
 import { unzipSync, strFromU8, strToU8, zipSync } from 'fflate';
 import { readFile } from 'node:fs/promises';
@@ -7,11 +8,7 @@ async function saveAndReopen(page, path) {
   const ready = page.waitForEvent('download');
   await page.locator('[data-action=saveAs]').click();
   await (await ready).saveAs(path);
-  await page.locator('.p-menu').click();
-  const pick = page.waitForEvent('filechooser');
-  await page.locator('[data-action=open]').click();
-  await (await pick).setFiles(path);
-  await expect(page.locator('#status')).toHaveText('Saved');
+  return openFileWindow(page, path);
 }
 
 test('Navigator, slide sections, hidden slides, and comments survive reopening', async ({
@@ -81,10 +78,11 @@ test('Navigator, slide sections, hidden slides, and comments survive reopening',
   await page.locator('.sorter [data-slide="3"]').dblclick();
   await expect(page.locator('.sorter')).toBeHidden();
   const output = info.outputPath('review.pptx');
-  await saveAndReopen(page, output);
-  await expect(rail.locator('.slide-hidden')).toHaveCount(1);
-  await expect(rail.getByText('Process')).toBeVisible();
-  await rail.locator('[data-slide="3"]').click();
+  page = await saveAndReopen(page, output);
+  const reopenedRail = page.locator('.rail');
+  await expect(reopenedRail.locator('.slide-hidden')).toHaveCount(1);
+  await expect(reopenedRail.getByText('Process')).toBeVisible();
+  await reopenedRail.locator('[data-slide="3"]').click();
   await page.locator('[data-action=comments]').click();
   await expect(page.locator('.comment-card p')).toHaveText(
     'Move this label slightly left.'
@@ -172,12 +170,10 @@ test('Grid rows reach both margins and navigation preserves up-to-date previews'
   const bytes = zipSync(
     Object.fromEntries(Object.entries(xml).map(([k, v]) => [k, strToU8(v)]))
   );
-  await page.locator('.p-menu').click();
-  const pick = page.waitForEvent('filechooser');
-  await page.locator('[data-action=open]').click();
-  await (await pick).setFiles({
+  page = await openFileWindow(page, {
     name: 'slides.pptx',
-    mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    mimeType:
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     buffer: Buffer.from(bytes),
   });
   await expect(page.locator('.rail .slide-tile')).toHaveCount(32);
@@ -245,4 +241,98 @@ test('Grid rows reach both margins and navigation preserves up-to-date previews'
     expect(Math.abs(current.width - expectedWidth)).toBeLessThan(0.1);
     expect(Math.abs(current.y + current.height / 2 - y)).toBeLessThan(1);
   }
+});
+
+test('Column boundaries paint at 4K across fit and fractional zoom', async ({
+  browser,
+}) => {
+  for (const dpr of [1, 2]) {
+    const page = await browser.newPage({
+      viewport: { width: 3840 / dpr, height: 2160 / dpr },
+      deviceScaleFactor: dpr,
+    });
+    try {
+      await page.goto('http://127.0.0.1:1420');
+      await page.locator('[data-preset=columns]').click();
+      for (const zoom of ['fit', '0.75']) {
+        await page.locator('#zoom').selectOption(zoom);
+        const art = page.locator('.artboard');
+        const row = await art.evaluate((n) => {
+          const rect = n.getBoundingClientRect();
+          const columns = [...n.querySelectorAll('.grid-overlay rect')];
+          const x = columns.flatMap((col) => {
+            const r = col.getBoundingClientRect();
+            return [r.left, r.right];
+          });
+          return { x, y: Math.round(rect.y + rect.height / 2) };
+        });
+        const shot = await page.screenshot({
+          clip: { x: 0, y: row.y, width: 3840 / dpr, height: 1 },
+        });
+        const visible = await page.evaluate(
+          async ({ image, x, dpr }) => {
+            const img = new Image();
+            img.src = 'data:image/png;base64,' + image;
+            await img.decode();
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const c = canvas.getContext('2d');
+            c.drawImage(img, 0, 0);
+            return x
+              .filter(
+                (pos) =>
+                  pos > 0 &&
+                  pos < innerWidth &&
+                  document
+                    .elementFromPoint(pos, innerHeight / 2)
+                    ?.closest('.artboard')
+              )
+              .map((pos) => {
+                const rgb = c.getImageData(
+                  Math.round(pos * dpr) - 2,
+                  0,
+                  5,
+                  1
+                ).data;
+                return [0, 4, 8, 12, 16].some((i) => rgb[i + 2] - rgb[i] > 45);
+              });
+          },
+          { image: shot.toString('base64'), x: row.x, dpr }
+        );
+        expect(visible.length).toBeGreaterThan(12);
+        expect(visible.every(Boolean)).toBe(true);
+      }
+    } finally {
+      await page.close();
+    }
+  }
+});
+
+test('Design number fields support repeated arrows and one undo per drag', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.locator('.artboard').dblclick({ position: { x: 120, y: 130 } });
+  await page.keyboard.insertText('Position');
+  await page.keyboard.press('Meta+Enter');
+  const x = page.getByLabel('X (px)', { exact: true });
+  const first = Number(await x.inputValue());
+  await x.focus();
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowDown');
+  await expect(x).toBeFocused();
+  expect(Number(await x.inputValue())).toBeCloseTo(first + 1, 2);
+  const b = await x.boundingBox();
+  const sx = b.x + b.width / 2,
+    sy = b.y + b.height / 2;
+  await page.mouse.move(sx, sy);
+  await page.mouse.down();
+  await page.mouse.move(sx + 36, sy, { steps: 6 });
+  expect(Number(await x.inputValue())).toBeCloseTo(first + 13, 2);
+  await page.mouse.up();
+  await x.blur();
+  await page.keyboard.press('Meta+z');
+  expect(Number(await x.inputValue())).toBeCloseTo(first + 1, 2);
 });

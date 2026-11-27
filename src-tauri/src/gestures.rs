@@ -1,5 +1,5 @@
 use std::ffi::c_void;
-use tauri::{App, Manager};
+use tauri::{App, Manager, WebviewWindow};
 
 extern "C" {
     fn pp_install_magnification(view: *mut c_void);
@@ -7,10 +7,11 @@ extern "C" {
 
 pub fn install(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(window) = app.get_webview_window("main") {
-        window.with_webview(|web| {
-            // Tauri runs this closure on the AppKit main thread and owns the WKWebView.
-            unsafe { pp_install_magnification(web.inner()) }
-        })?;
+        install_window(&window)?;
     }
     Ok(())
+}
+
+pub fn install_window(window: &WebviewWindow) -> tauri::Result<()> {
+    window.with_webview(|web| unsafe { pp_install_magnification(web.inner()) })
 }

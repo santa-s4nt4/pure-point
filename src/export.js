@@ -87,7 +87,7 @@ function textBody(o) {
       const bullet = p.bullet
         ? `<a:buChar char="${esc(p.bullet)}"/>`
         : '<a:buNone/>';
-      const props = `<a:pPr algn="${align(p.align || o.align)}" marL="${emu(p.margin || 0)}" marR="${emu(p.marginRight || 0)}" indent="${emu(p.indent || 0)}"><a:lnSpc>${lineSpacingXml(p.lineHeight ?? o.lineHeight)}</a:lnSpc><a:spcBef><a:spcPts val="${Math.round((p.before || 0) * 100)}"/></a:spcBef><a:spcAft><a:spcPts val="${Math.round((p.after || 0) * 100)}"/></a:spcAft>${bullet}</a:pPr>`;
+      const props = `<a:pPr${p.level ? ' lvl="' + p.level + '"' : ''} algn="${align(p.align || o.align)}" marL="${emu(p.margin || 0)}" marR="${emu(p.marginRight || 0)}" indent="${emu(p.indent || 0)}"><a:lnSpc>${lineSpacingXml(p.lineHeight ?? o.lineHeight)}</a:lnSpc><a:spcBef><a:spcPts val="${Math.round((p.before || 0) * 100)}"/></a:spcBef><a:spcAft><a:spcPts val="${Math.round((p.after || 0) * 100)}"/></a:spcAft>${bullet}</a:pPr>`;
       const text = p.runs
         .map((run) => {
           const attrs = `<a:rPr ${runProps(run)}>${runPaint(run)}${typefaces(run)}</a:rPr>`;
@@ -325,6 +325,8 @@ function patchOriginal(n, o, old, reparented = false) {
           ) || null
         );
       }
+      if ((current.level || 0) !== (prior.level || 0))
+        ppr().setAttribute('lvl', current.level || 0);
       if (newPlaceholderParagraph || current.margin !== prior.margin)
         ppr().setAttribute('marL', emu(current.margin || 0));
       if (current.marginRight !== prior.marginRight)
@@ -336,7 +338,7 @@ function patchOriginal(n, o, old, reparented = false) {
         ['after', 'spcAft'],
         ['lineHeight', 'lnSpc'],
       ]) {
-        if (current[key] === prior[key]) continue;
+        if (current[key] === prior[key] && !newPlaceholderParagraph) continue;
         const val =
           element === 'lnSpc' && typeof current.lineHeight === 'string'
             ? parseFloat(current.lineHeight)

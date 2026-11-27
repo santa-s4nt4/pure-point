@@ -387,26 +387,29 @@ export function scene(
   return n;
 }
 export function gridOverlay(deck, g) {
-  const grid = el('div', 'grid-overlay');
+  const svg = (tag, attrs) => {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const [key, value] of Object.entries(attrs))
+      node.setAttribute(key, value);
+    return node;
+  };
+  const grid = svg('svg', {
+    class: 'grid-overlay',
+    viewBox: `0 0 ${deck.w} ${deck.h}`,
+    preserveAspectRatio: 'none',
+    'aria-hidden': 'true',
+  });
   const { x, y, xb, yb } = gridLines(deck.w, deck.h, g);
-  for (const [pos, size] of xb) {
-    const n = el('div', 'band vertical');
-    Object.assign(n.style, { left: pos + 'px', width: size + 'px' });
-    grid.append(n);
-  }
-  for (const [pos, size] of yb) {
-    const n = el('div', 'band horizontal');
-    Object.assign(n.style, { top: pos + 'px', height: size + 'px' });
-    grid.append(n);
-  }
-  for (const [values, vertical] of [
-    [x, true],
-    [y, false],
-  ])
-    for (const p of values) {
-      const n = el('i', vertical ? 'v' : 'h');
-      n.style[vertical ? 'left' : 'top'] = p + 'px';
-      grid.append(n);
-    }
+  for (const [x, width] of xb)
+    grid.append(svg('rect', { x, width, height: deck.h }));
+  for (const [y, height] of yb)
+    grid.append(svg('rect', { y, height, width: deck.w }));
+  const lines = [
+    ...x.map((p) => `M${p} 0V${deck.h}`),
+    ...y.map((p) => `M0 ${p}H${deck.w}`),
+  ];
+  grid.append(
+    svg('path', { d: lines.join(' '), 'vector-effect': 'non-scaling-stroke' })
+  );
   return grid;
 }

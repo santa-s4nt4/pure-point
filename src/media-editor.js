@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
 import { native, pickFile, toData, releaseMovies } from './platform.js';
-import { chooseCrop, cropFrame } from './image-crop.js';
 import { shape, uid } from './model.js';
 import { onlineVideo, videoTypes } from './media-format.js';
 
@@ -407,28 +406,6 @@ export function createMediaEditor({
   }
   return {
     replaceMedia,
-    async cropImage(target) {
-      const deck = getDeck(),
-        slide = getSlide();
-      if (
-        isBusy() ||
-        target?.kind !== 'image' ||
-        editableMedia(slide.items, target.id) !== target
-      )
-        return;
-      const assets = getAssets();
-      const crop = await chooseCrop(
-        target,
-        assets[target.asset],
-        assets[target.fallbackAsset]
-      );
-      if (
-        crop &&
-        stillActive(deck, slide) &&
-        editableMedia(slide.items, target.id) === target
-      )
-        change(() => Object.assign(target, cropFrame(target, crop)));
-    },
     insertImage: () => pick('image'),
     insertVideo: () => pick('video'),
     insertEmbed: () => pick('embed'),

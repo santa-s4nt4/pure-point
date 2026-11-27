@@ -35,3 +35,17 @@
   pointer-events: stroke;
   cursor: move;
 }
+
+.callout-tip {
+  position: absolute;
+  pointer-events: auto;
+  width: calc(12 * var(--hair));
+  height: calc(12 * var(--hair));
+  border: var(--hair) solid #6a5013;
+  background: #ffd458;
+  transform: translate(-50%, -50%) rotate(45deg);
+  cursor: grab;
+  touch-action: none;
+}
+.artboard:has(.text-edit) .selection:has(.callout-tip) { display: block; }
+.artboard:has(.text-edit) .selection .select-box { display: none; }

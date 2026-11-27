@@ -97,7 +97,7 @@ function restorePosition(lines, mark) {
   return edge(line, true);
 }
 
-export function inlineText({ item, object, event, finish, onInput }) {
+export function inlineText({ item, object, event, finish, onInput, toLocal }) {
   const input = item.querySelector(':scope>.item-text');
   if (!input) return null;
   const controller = new AbortController(),
@@ -141,6 +141,99 @@ export function inlineText({ item, object, event, finish, onInput }) {
     item.style.width = Math.max(2, size.w + extraWidth) + 'px';
     item.style.height = Math.max(1, size.h + extraHeight) + 'px';
   }
+  function indentSelection(direction) {
+    const sel = document.getSelection();
+    if (
+      !sel.rangeCount ||
+      !input.contains(sel.anchorNode) ||
+      !input.contains(sel.focusNode)
+    )
+      return;
+    const mark = remember();
+    if (linesOf(input)[0] === input) {
+      const line = document.createElement('div');
+      line.append(...input.childNodes);
+      input.append(line);
+    }
+    const lines = linesOf(input);
+    const rows = editableParagraphs(input, object);
+    const [first, last] = [...mark].sort(
+      (a, b) => a.index - b.index || a.offset - b.offset
+    );
+    const end =
+      last.index > first.index && !last.offset ? last.index - 1 : last.index;
+    for (let i = first.index; i <= end; i++) {
+      const line = lines[i],
+        row = rows[i];
+      const level = Math.max(0, Math.min(8, row.level + direction));
+      if (row.level === level && (direction > 0 || row.bullet || !row.margin))
+        continue;
+      const margin = Math.max(0, row.margin + direction * object.size * 1.5);
+      line.dataset.level = level;
+      line.dataset.margin = margin;
+      if (row.bullet) {
+        line.style.setProperty('--bullet-margin', margin + 'px');
+        line.style.setProperty('--bullet-position', margin + row.indent + 'px');
+      } else line.style.paddingLeft = margin + 'px';
+      touched = true;
+    }
+    if (touched) {
+      adjust();
+      onInput();
+    }
+    sel.setBaseAndExtent(
+      ...restorePosition(lines, mark[0]),
+      ...restorePosition(lines, mark[1])
+    );
+    paintCaret();
+  }
+
+  // A native editing caret can span WebKit's entire line box. Keep the
+  // selection and IME native and paint the insertion mark at the run's size.
+  const caret = document.createElement('i');
+  caret.className = 'glyph-caret';
+  caret.setAttribute('aria-hidden', 'true');
+  caret.hidden = true;
+  item.append(caret);
+  function paintCaret() {
+    const sel = document.getSelection();
+    caret.hidden = true;
+    input.classList.remove('glyph-caret-active');
+    if (
+      composing ||
+      document.activeElement !== input ||
+      !sel.isCollapsed ||
+      !sel.rangeCount ||
+      !input.contains(sel.anchorNode)
+    )
+      return;
+    const range = sel.getRangeAt(0);
+    const node = range.startContainer;
+    const run = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    const style = getComputedStyle(run);
+    const size = parseFloat(style.fontSize);
+    if (!(parseFloat(style.lineHeight) > size * 1.25)) return;
+    let rect = range.getBoundingClientRect();
+    if (!rect.height) {
+      const br = run.querySelector('br');
+      if (!br) return;
+      rect = br.getBoundingClientRect();
+    }
+    if (!rect.height) return;
+    const center = toLocal({
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2,
+    });
+    Object.assign(caret.style, {
+      left: center.x + 'px',
+      top: center.y - size / 2 + 'px',
+      height: size + 'px',
+      backgroundColor: style.color,
+    });
+    caret.hidden = false;
+    input.classList.add('glyph-caret-active');
+  }
+  document.addEventListener('selectionchange', paintCaret, options);
   input.addEventListener(
     'beforeinput',
     (e) => {
@@ -152,6 +245,7 @@ export function inlineText({ item, object, event, finish, onInput }) {
     'compositionstart',
     () => {
       composing = true;
+      paintCaret();
     },
     options
   );
@@ -160,6 +254,7 @@ export function inlineText({ item, object, event, finish, onInput }) {
     () => {
       composing = false;
       adjust();
+      paintCaret();
       onInput();
       if (deferBlur) {
         deferBlur = false;
@@ -175,6 +270,7 @@ export function inlineText({ item, object, event, finish, onInput }) {
     () => {
       touched = true;
       adjust();
+      paintCaret();
       onInput();
     },
     options
@@ -195,6 +291,11 @@ export function inlineText({ item, object, event, finish, onInput }) {
     'keydown',
     (e) => {
       if (e.isComposing || composing || e.keyCode === 229) return;
+      if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        indentSelection(e.shiftKey ? -1 : 1);
+        return;
+      }
       if (
         e.key === 'Escape' ||
         ((e.metaKey || e.ctrlKey) && e.key === 'Enter')
@@ -225,6 +326,7 @@ export function inlineText({ item, object, event, finish, onInput }) {
   input.addEventListener(
     'blur',
     (e) => {
+      caret.hidden = true;
       if (e.relatedTarget?.closest('#properties,dialog')) {
         remember();
         return;
@@ -240,6 +342,7 @@ export function inlineText({ item, object, event, finish, onInput }) {
   );
   input.focus({ preventScroll: true });
   caretAt(input, event);
+  paintCaret();
   return {
     o: object,
     input,
@@ -254,7 +357,14 @@ export function inlineText({ item, object, event, finish, onInput }) {
       const rows = editableParagraphs(input, object);
       return (
         rows.map((p) => p.text).join('\n') !== object.text ||
-        rows.some((p, i) => p.bullet !== (object.paragraphs?.[i]?.bullet || ''))
+        rows.some((p, i) => {
+          const prior = object.paragraphs?.[i];
+          return (
+            p.bullet !== (prior?.bullet || '') ||
+            p.level !== (prior?.level || 0) ||
+            p.margin !== (prior?.margin || 0)
+          );
+        })
       );
     },
     apply() {
@@ -283,6 +393,8 @@ export function inlineText({ item, object, event, finish, onInput }) {
     },
     close() {
       controller.abort();
+      caret.remove();
+      input.classList.remove('glyph-caret-active');
       input.removeAttribute('contenteditable');
       input.removeAttribute('role');
       input.removeAttribute('aria-label');

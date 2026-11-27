@@ -15,22 +15,22 @@ use core_text::{
 use rfd::AsyncFileDialog;
 use serde::Serialize;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
 };
 use tauri::menu::{Menu, MenuItem, SubmenuBuilder};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, WebviewWindowBuilder};
 
 #[derive(Default)]
 struct Documents {
     sources: Mutex<HashMap<u64, Arc<package::Source>>>,
     sequence: AtomicU64,
-    incoming: Mutex<Option<PathBuf>>,
-    dirty: AtomicBool,
+    incoming: Mutex<HashMap<String, PathBuf>>,
+    dirty: Mutex<HashSet<String>>,
 }
 #[derive(Serialize)]
 struct Opened {
@@ -39,20 +39,51 @@ struct Opened {
     parts: package::Preview,
 }
 
+fn document_window(app: &AppHandle, path: Option<PathBuf>) -> Result<(), String> {
+    let state = app.state::<Documents>();
+    let label = format!(
+        "document-{}",
+        state.sequence.fetch_add(1, Ordering::Relaxed)
+    );
+    let mut config = app.config().app.windows[0].clone();
+    config.label = label.clone();
+    if let Some(path) = path {
+        state.incoming.lock().unwrap().insert(label.clone(), path);
+    }
+    let result =
+        WebviewWindowBuilder::from_config(app, &config).and_then(|builder| builder.build());
+    let window = result.map_err(|e| {
+        state.incoming.lock().unwrap().remove(&label);
+        e.to_string()
+    })?;
+    gestures::install_window(&window).map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
-async fn open_document(
-    state: State<'_, Documents>,
-    incoming: bool,
-) -> Result<Option<Opened>, String> {
-    let path = if incoming {
-        state.incoming.lock().unwrap().take()
-    } else {
-        AsyncFileDialog::new()
+async fn new_document_window(window: WebviewWindow, pick: bool) -> Result<(), String> {
+    let path = if pick {
+        let Some(file) = AsyncFileDialog::new()
+            .set_parent(&window)
             .add_filter("PowerPoint", &["pptx"])
             .pick_file()
             .await
-            .map(|f| f.path().to_owned())
+        else {
+            return Ok(());
+        };
+        Some(file.path().to_owned())
+    } else {
+        None
     };
+    document_window(window.app_handle(), path)
+}
+
+#[tauri::command]
+async fn open_document(
+    window: WebviewWindow,
+    state: State<'_, Documents>,
+) -> Result<Option<Opened>, String> {
+    let path = state.incoming.lock().unwrap().remove(window.label());
     let Some(path) = path else { return Ok(None) };
     read_document(&state, path).await.map(Some)
 }
@@ -100,6 +131,7 @@ fn release_document(state: State<Documents>, id: u64) {
 
 #[tauri::command]
 async fn save_document(
+    window: WebviewWindow,
     state: State<'_, Documents>,
     source: Option<u64>,
     path: Option<PathBuf>,
@@ -109,6 +141,7 @@ async fn save_document(
     let path = match path {
         Some(p) => p,
         None => match AsyncFileDialog::new()
+            .set_parent(&window)
             .add_filter("PowerPoint", &["pptx"])
             .set_file_name(name)
             .save_file()
@@ -174,13 +207,26 @@ async fn system_fonts() -> Vec<Typeface> {
     result
 }
 #[tauri::command]
-fn set_dirty(state: State<Documents>, dirty: bool) {
-    state.dirty.store(dirty, Ordering::SeqCst);
+fn set_dirty(window: WebviewWindow, state: State<Documents>, dirty: bool) {
+    let mut labels = state.dirty.lock().unwrap();
+    if dirty {
+        labels.insert(window.label().to_owned());
+    } else {
+        labels.remove(window.label());
+    }
 }
 #[tauri::command]
-fn finish_quit(app: AppHandle, state: State<Documents>) {
-    state.dirty.store(false, Ordering::SeqCst);
-    app.exit(0);
+fn finish_close(
+    window: WebviewWindow,
+    state: State<Documents>,
+    quitting: bool,
+) -> Result<(), String> {
+    window.destroy().map_err(|e| e.to_string())?;
+    state.dirty.lock().unwrap().remove(window.label());
+    if quitting {
+        window.app_handle().exit(0);
+    }
+    Ok(())
 }
 #[tauri::command]
 async fn sample_screen_color() -> Result<Option<String>, String> {
@@ -205,6 +251,7 @@ fn main() {
             for (id, title, accel) in [
                 ("new", "New", "Cmd+N"),
                 ("open", "Open…", "Cmd+O"),
+                ("close", "Close Window", "Cmd+W"),
                 ("save", "Save", "Cmd+S"),
                 ("saveAs", "Save As…", "Cmd+Shift+S"),
                 ("pdf", "Export PDF…", "Cmd+Shift+E"),
@@ -236,18 +283,25 @@ fn main() {
             Menu::with_items(app, &[&app_menu, &file.build()?, &edit])
         })
         .on_menu_event(|app, event| {
-            let _ = app.emit("editor-command", event.id().as_ref());
+            if let Some(window) = app
+                .webview_windows()
+                .into_values()
+                .find(|w| w.is_focused().unwrap_or(false))
+            {
+                let _ = app.emit_to(window.label(), "editor-command", event.id().as_ref());
+            }
         })
         .on_window_event(|win, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if win.state::<Documents>().dirty.load(Ordering::SeqCst) {
-                    api.prevent_close();
-                    let _ = win.emit("editor-command", "quit");
-                }
+                api.prevent_close();
+                let _ = win.emit_to(win.label(), "editor-command", "close");
             }
         })
         .invoke_handler(tauri::generate_handler![
             clipboard::read_canvas_clipboard,
+            clipboard::store_selection,
+            clipboard::read_selection,
+            new_document_window,
             open_document,
             open_template,
             sharing::share_document_mode,
@@ -267,7 +321,7 @@ fn main() {
             movies::cancel_movie_upload,
             movies::release_movies,
             set_dirty,
-            finish_quit
+            finish_close
         ])
         .build(tauri::generate_context!())
         .expect("pure-point could not start")
@@ -277,19 +331,35 @@ fn main() {
                 app.state::<Documents>().sources.lock().unwrap().clear();
             }
             tauri::RunEvent::Opened { urls } => {
-                if let Some(path) = urls.iter().filter_map(|u| u.to_file_path().ok()).find(|p| {
-                    p.extension()
-                        .is_some_and(|e| e.eq_ignore_ascii_case("pptx"))
-                }) {
-                    *app.state::<Documents>().incoming.lock().unwrap() = Some(path);
-                    let _ = app.emit("editor-command", "incoming");
+                for path in urls
+                    .iter()
+                    .filter_map(|url| url.to_file_path().ok())
+                    .filter(|p| {
+                        p.extension()
+                            .is_some_and(|e| e.eq_ignore_ascii_case("pptx"))
+                    })
+                {
+                    if let Err(error) = document_window(app, Some(path)) {
+                        eprintln!("Could not open presentation window: {error}");
+                    }
                 }
             }
-            tauri::RunEvent::ExitRequested { api, .. }
-                if app.state::<Documents>().dirty.load(Ordering::SeqCst) =>
-            {
-                api.prevent_exit();
-                let _ = app.emit("editor-command", "quit");
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                // Resolve one unsaved presentation at a time. Cancel in any window
+                // stops the sequence and leaves the remaining presentations open.
+                let label = app
+                    .state::<Documents>()
+                    .dirty
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .next()
+                    .cloned();
+                if let Some(window) = label.and_then(|l| app.get_webview_window(&l)) {
+                    api.prevent_exit();
+                    let _ = window.set_focus();
+                    let _ = window.emit_to(window.label(), "editor-command", "quit");
+                }
             }
             _ => {}
         });

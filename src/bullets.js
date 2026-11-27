@@ -36,6 +36,7 @@ export function editableParagraphs(root, object) {
         text: value.replace(/\u00a0/g, ' '),
         source,
         list,
+        line: parent,
         fragments,
       });
       value = '';
@@ -78,7 +79,7 @@ export function editableParagraphs(root, object) {
     if (inline || (!blocks && !['UL', 'OL'].includes(parent.tagName))) flush();
   }
   scan(root, undefined, null);
-  return rows.map(({ text, source, list, fragments }, i) => {
+  return rows.map(({ text, source, list, line, fragments }, i) => {
     const index = source ?? Math.min(i, (object.paragraphs?.length || 1) - 1);
     const prior = object.paragraphs?.[index];
     const bullet = list ? list.dataset.bullet || '•' : '';
@@ -103,11 +104,15 @@ export function editableParagraphs(root, object) {
       runTexts,
       index,
       bullet,
-      margin: bullet
-        ? points('margin', 1.5 * object.size)
-        : prior?.bullet
-          ? 0
-          : prior?.margin || 0,
+      level: Number(line.dataset.level ?? prior?.level ?? 0),
+      margin:
+        line.dataset.margin !== undefined
+          ? Number(line.dataset.margin)
+          : bullet
+            ? points('margin', 1.5 * object.size)
+            : prior?.bullet
+              ? 0
+              : prior?.margin || 0,
       indent: bullet
         ? points('indent', -object.size)
         : prior?.bullet
@@ -117,7 +122,7 @@ export function editableParagraphs(root, object) {
   });
 }
 export function applyParagraphs(object, rows) {
-  if (object.paragraphs || rows.some((p) => p.bullet)) {
+  if (object.paragraphs || rows.some((p) => p.bullet || p.level || p.margin)) {
     const originals = object.paragraphs || [];
     const {
       font,
@@ -142,7 +147,7 @@ export function applyParagraphs(object, rows) {
       eastAsianFont,
     };
     object.paragraphs = rows.map(
-      ({ text, runTexts, index, bullet, margin, indent }) => {
+      ({ text, runTexts, index, bullet, level, margin, indent }) => {
         const prior = originals[index];
         const base = prior?.base || standard;
         const previous = prior?.runs || [];
@@ -162,6 +167,7 @@ export function applyParagraphs(object, rows) {
           base,
           runs,
           bullet,
+          level,
           margin,
           indent,
         };

@@ -89,7 +89,12 @@ impl CacheEntry {
     }
 }
 
-static FILES: LazyLock<Mutex<HashMap<String, Arc<CacheEntry>>>> = LazyLock::new(Default::default);
+struct RegisteredMedia {
+    entry: Arc<CacheEntry>,
+    owners: usize,
+}
+
+static FILES: LazyLock<Mutex<HashMap<String, RegisteredMedia>>> = LazyLock::new(Default::default);
 static UPLOADS: LazyLock<Mutex<HashMap<String, Upload>>> = LazyLock::new(Default::default);
 static ADDRESS: OnceLock<Result<SocketAddr, String>> = OnceLock::new();
 const MAX_VIDEO_IMPORT_BYTES: u64 = 512 * 1024 * 1024;
@@ -133,7 +138,7 @@ fn entry(id: &str) -> Result<Arc<CacheEntry>, String> {
         .lock()
         .unwrap()
         .get(id)
-        .cloned()
+        .map(|m| m.entry.clone())
         .ok_or_else(|| "The local media is no longer available.".into())
 }
 pub fn open_file(id: &str) -> Result<io::Take<File>, String> {
@@ -148,11 +153,14 @@ fn register(backing: MediaBacking, size: u64, mime: &str) -> Result<MovieAsset, 
     let id = token()?;
     FILES.lock().unwrap().insert(
         id.clone(),
-        Arc::new(CacheEntry {
-            backing,
-            size,
-            mime: mime.to_owned(),
-        }),
+        RegisteredMedia {
+            entry: Arc::new(CacheEntry {
+                backing,
+                size,
+                mime: mime.to_owned(),
+            }),
+            owners: 1,
+        },
     );
     Ok(MovieAsset {
         url: format!("http://{addr}/{id}"),
@@ -354,11 +362,26 @@ pub async fn finish_movie_upload(id: String) -> Result<Prepared, String> {
 pub fn cancel_movie_upload(id: String) {
     UPLOADS.lock().unwrap().remove(&id);
 }
+pub fn retain_movies(tokens: &[String]) -> Result<(), String> {
+    let mut files = FILES.lock().unwrap();
+    if tokens.iter().any(|id| !files.contains_key(id)) {
+        return Err("The copied media is no longer available.".into());
+    }
+    for id in tokens {
+        files.get_mut(id).unwrap().owners += 1;
+    }
+    Ok(())
+}
 #[tauri::command]
 pub fn release_movies(tokens: Vec<String>) {
     let mut files = FILES.lock().unwrap();
     for id in tokens {
-        files.remove(&id);
+        if let Some(media) = files.get_mut(&id) {
+            media.owners -= 1;
+            if media.owners == 0 {
+                files.remove(&id);
+            }
+        }
     }
 }
 pub fn clear() {
@@ -545,6 +568,30 @@ mod tests {
         release_movies(vec![stored.token.clone(), compressed.token.clone()]);
         assert!(open_file(&stored.token).is_err());
         assert!(request(compressed, "GET", "").0.contains("404 Not Found"));
+    }
+
+    #[test]
+    fn clipboard_media_outlives_its_source_window_and_is_released_after_paste() {
+        let dir = new_dir().unwrap();
+        let path = dir.path().join("picture.png");
+        fs::write(&path, b"copied pixels").unwrap();
+        let asset = register_import(dir, path, "image/png").unwrap();
+        let media = vec![asset.token.clone()];
+        crate::clipboard::store_selection("one".into(), "snapshot".into(), media.clone()).unwrap();
+        release_movies(media.clone());
+        assert!(crate::clipboard::read_selection("other".into())
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            crate::clipboard::read_selection("one".into())
+                .unwrap()
+                .as_deref(),
+            Some("snapshot")
+        );
+        crate::clipboard::store_selection("two".into(), "next".into(), vec![]).unwrap();
+        assert_eq!(request(&asset, "GET", "").1, b"copied pixels");
+        release_movies(media);
+        assert!(open_file(&asset.token).is_err());
     }
 
     #[test]

@@ -278,13 +278,15 @@ export function shapePanel(o, { section, field }) {
       optionField(
         'Callout shape',
         'calloutShape',
-        o.calloutShape || 'ellipse',
+        o.calloutShape === 'roundRect' ? 'rect' : o.calloutShape || 'ellipse',
         [
           ['ellipse', 'Oval'],
           ['rect', 'Rectangle'],
-          ['roundRect', 'Rounded rectangle'],
         ]
-      )
+      ) +
+        (['rect', 'roundRect'].includes(o.calloutShape)
+          ? field('Corner radius (%)', 'cornerRadius', cornerPercent(o), 0, 50)
+          : '')
     );
   if (o.kind === 'rect' || o.kind === 'roundRect')
     return section(

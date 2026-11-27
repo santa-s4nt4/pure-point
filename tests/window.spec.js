@@ -1,3 +1,4 @@
+import { openFileWindow } from './document-window.js';
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { unzipSync, strFromU8 } from 'fflate';
@@ -148,4 +149,117 @@ test('Appearance follows the system and remembers an explicit override', async (
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(rail).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   await expect(page.locator('#status')).toHaveText('Not saved yet');
+});
+
+test('Native New and Open leave edits in their window, and a new template title saves with 1.5 spacing', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const parts = await page.evaluate(async () => {
+    const { blankDeck } = await import('/src/model.js');
+    const { exportDeck } = await import('/src/export.js');
+    const { layoutOptions } = await import('/src/slide-layouts.js');
+    const d = blankDeck();
+    d.slides = [layoutOptions(null, d, d.slides[0])[0].slide];
+    const result = exportDeck(d);
+    result.xml['ppt/slides/slide1.xml'] = result.xml[
+      'ppt/slides/slide1.xml'
+    ].replace('val="150000"', 'val="100000"');
+    return { xml: result.xml, media: {} };
+  });
+  await page.addInitScript((parts) => {
+    window.isTauri = true;
+    window.requestedWindows = [];
+    window.__TAURI_INTERNALS__ = {
+      metadata: { currentWindow: { label: 'document-1' } },
+      transformCallback: () => 1,
+      invoke: async (command, args) => {
+        if (command === 'system_fonts') return [];
+        if (command === 'open_template')
+          return { id: 2, path: 'template.potx', parts };
+        if (command === 'new_document_window')
+          window.requestedWindows.push(args.pick);
+        if (command === 'save_document') {
+          window.savedChanges = args.changes;
+          return '/tmp/test.pptx';
+        }
+      },
+    };
+  }, parts);
+  await page.reload();
+  const title = page.locator('.artboard .item[data-id]').first();
+  await title.click();
+  await expect(page.getByLabel('Line spacing', { exact: true })).toHaveValue(
+    '1.5'
+  );
+  await page.getByRole('button', { name: 'Toggle script' }).click();
+  await page
+    .getByRole('textbox', { name: 'Slide script' })
+    .fill('Keep this window');
+  for (const command of ['new', 'open', 'save']) {
+    await page.locator('.p-menu').click();
+    await page.locator('.menu [data-action="' + command + '"]').click();
+  }
+  expect(await page.evaluate(() => window.requestedWindows)).toEqual([
+    false,
+    true,
+  ]);
+  await expect(page.getByRole('textbox', { name: 'Slide script' })).toHaveValue(
+    'Keep this window'
+  );
+  expect(
+    await page.evaluate(() => window.savedChanges.xml['ppt/slides/slide1.xml'])
+  ).toContain('val="150000"');
+});
+
+test('New and Open create independent browser windows and preserve unsaved work', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Toggle script' }).click();
+  const notes = page.getByRole('textbox', { name: 'Slide script' });
+  await notes.fill('Keep working here');
+  const opened = page.context().waitForEvent('page');
+  await page.keyboard.press('Meta+n');
+  const fresh = await opened;
+  const title = fresh.locator('.artboard .item[data-id]').first();
+  await title.click();
+  await expect(fresh.getByLabel('Line spacing', { exact: true })).toHaveValue(
+    '1.5'
+  );
+  const saved = fresh.waitForEvent('download');
+  await fresh.keyboard.press('Meta+Shift+s');
+  const loaded = await openFileWindow(page, await (await saved).path());
+  await expect(loaded.locator('.artboard .item[data-id]')).toHaveCount(1);
+  await fresh.close();
+  await loaded.close();
+  await expect(notes).toHaveValue('Keep working here');
+  await expect(page.locator('#status')).toHaveText('Unsaved changes');
+});
+
+test('Copied objects remain editable in another document window after the source closes', async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('/');
+  const board = page.locator('.artboard');
+  await page.locator('[data-action=tool-rect]').click();
+  const b = await board.boundingBox();
+  await page.mouse.move(b.x + 60, b.y + 60);
+  await page.mouse.down();
+  await page.mouse.move(b.x + 180, b.y + 160, { steps: 4 });
+  await page.mouse.up();
+  await page.keyboard.press('Meta+c');
+  const opened = context.waitForEvent('page');
+  await page.keyboard.press('Meta+n');
+  const child = await opened;
+  await expect(child.locator('#status')).toHaveText('Not saved yet');
+  await page.close();
+  await child.locator('.artboard').click({ position: { x: 40, y: 40 } });
+  await child.keyboard.press('Meta+v');
+  await expect(
+    child.locator('.artboard .item[data-id] > .geometry')
+  ).toHaveCount(1);
+  await expect(child.getByLabel('Corner radius (%)')).toHaveValue('0');
 });

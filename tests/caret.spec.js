@@ -1,3 +1,4 @@
+import { openFileWindow } from './document-window.js';
 import { test, expect } from '@playwright/test';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { readFile } from 'node:fs/promises';
@@ -29,12 +30,7 @@ async function openRichText(page) {
       Object.entries(parts).map(([name, contents]) => [name, strToU8(contents)])
     )
   );
-  const choose = page.waitForEvent('filechooser');
-  await page.locator('.p-menu').click();
-  await page.locator('.menu [data-action=open]').click();
-  await (
-    await choose
-  ).setFiles({
+  page = await openFileWindow(page, {
     name: 'Rich.pptx',
     mimeType:
       'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -42,13 +38,14 @@ async function openRichText(page) {
   });
   const frame = page.locator('.artboard .item[data-id]').first();
   await expect(frame).toContainText('LightSmall');
-  return frame;
+  return page;
 }
 
 test('Entering a centered PowerPoint auto-fit frame preserves glyph positions and uses a run-sized caret', async ({
   page,
 }) => {
-  const frame = await openRichText(page);
+  page = await openRichText(page);
+  const frame = page.locator('.artboard .item[data-id]').first();
   const glyph = frame.locator('span').filter({ hasText: /^Final$/ });
   const original = await glyph.boundingBox(),
     bounds = await frame.boundingBox();
@@ -105,7 +102,8 @@ test('Entering a centered PowerPoint auto-fit frame preserves glyph positions an
 test('Typing into a decorated empty paragraph highlights just the live glyph', async ({
   page,
 }) => {
-  const frame = await openRichText(page);
+  page = await openRichText(page);
+  const frame = page.locator('.artboard .item[data-id]').first();
   const row = frame.locator('[data-paragraph="1"]');
   await expect(row).toHaveText('');
   await row.dblclick({ force: true });
@@ -148,7 +146,8 @@ test('Typing into a decorated empty paragraph highlights just the live glyph', a
 test('Edits at different positions keep the original PowerPoint run boundaries and fonts', async ({
   page,
 }, info) => {
-  const frame = await openRichText(page);
+  page = await openRichText(page);
+  const frame = page.locator('.artboard .item[data-id]').first();
   await frame.dblclick();
   const editor = page.getByRole('textbox', { name: 'Slide text' });
   const runs = editor.locator('[data-paragraph="0"] span');

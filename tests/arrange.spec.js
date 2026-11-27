@@ -1,18 +1,13 @@
+import { openFileWindow } from './document-window.js';
 import { expect, test } from '@playwright/test';
 import { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate';
 
 async function openSlides(page, file) {
-  await page.locator('.p-menu').click();
-  const picking = page.waitForEvent('filechooser');
-  await page.locator('[data-action=open]').click();
-  await (
-    await picking
-  ).setFiles({
+  return openFileWindow(page, {
     name: 'Layers.pptx',
     mimeType: 'application/octet-stream',
     buffer: file,
   });
-  await expect(page.locator('#status')).toHaveText('Saved');
 }
 
 async function makeDeck(page) {
@@ -36,7 +31,7 @@ async function makeDeck(page) {
       null
     ).xml;
   });
-  await openSlides(
+  return openSlides(
     page,
     Buffer.from(
       zipSync(
@@ -51,7 +46,7 @@ async function makeDeck(page) {
 test('Slide selections in the navigator use section and deletion shortcuts', async ({
   page,
 }) => {
-  await makeDeck(page);
+  page = await makeDeck(page);
   await expect(page.locator('.inspector [data-action=slides]')).toHaveCount(0);
   const pages = page.locator('.rail');
   await pages.locator('[data-slide="1"]').click();
@@ -73,7 +68,7 @@ test('Slide selections in the navigator use section and deletion shortcuts', asy
 test('Alignment, live color, layer ordering, and object comments round-trip', async ({
   page,
 }) => {
-  await makeDeck(page);
+  page = await makeDeck(page);
   const art = page.locator('.artboard'),
     objects = art.locator('.scene > [data-id]');
   await objects.first().click();
@@ -123,19 +118,21 @@ test('Alignment, live color, layer ordering, and object comments round-trip', as
     ([p]) => p.includes('/comments/') && p.endsWith('.xml')
   );
   expect(strFromU8(comments[1])).toContain('ac:deMkLst');
-  await openSlides(page, file);
+  page = await openSlides(page, file);
   await page.locator('[data-action=comments]').click();
   await expect(page.locator('.comment-card .comment-target')).toHaveText(
     'Rear'
   );
   await page.locator('[data-action=layers]').click();
-  await expect(rows.first().locator('[data-layer]')).toHaveText('Rear');
+  await expect(
+    page.locator('.layer-row').first().locator('[data-layer]')
+  ).toHaveText('Rear');
 });
 
 test('Color picker previews drags, formats, document colors and opacity, then reopens editable PowerPoint paint', async ({
   page,
 }) => {
-  await makeDeck(page);
+  page = await makeDeck(page);
   const rear = page.locator('.artboard .scene > [data-id]').first();
   await rear.click();
   const trigger = page.locator('[data-color=fill]');
@@ -190,15 +187,18 @@ test('Color picker previews drags, formats, document colors and opacity, then re
   expect(strFromU8(unzipSync(zip)['ppt/slides/slide1.xml'])).toContain(
     '<a:alpha val="40000"'
   );
-  await openSlides(page, zip);
+  page = await openSlides(page, zip);
   await page.locator('.artboard .scene > [data-id]').first().click();
-  await expect(trigger).toHaveAttribute('data-value', '#0A141E66');
+  await expect(page.locator('[data-color=fill]')).toHaveAttribute(
+    'data-value',
+    '#0A141E66'
+  );
 });
 
 test('The same live paint controls edit slide backgrounds, strokes and inline text', async ({
   page,
 }) => {
-  await makeDeck(page);
+  page = await makeDeck(page);
   const art = page.locator('.artboard'),
     bg = page.locator('[data-color=bg]');
   await bg.click();
@@ -235,8 +235,8 @@ test('The navigator pastes independent slides in order, including notes and impo
   context,
 }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await makeDeck(page);
-  const tiles = page.locator('.rail [data-slide]');
+  page = await makeDeck(page);
+  let tiles = page.locator('.rail [data-slide]');
   await page.locator('header [data-action=script]').click();
   for (const [i, note] of ['First', 'Second', 'Third', 'Fourth'].entries()) {
     await tiles.nth(i).click();
@@ -270,7 +270,9 @@ test('The navigator pastes independent slides in order, including notes and impo
   const stream = await (await download).createReadStream();
   const chunks = [];
   for await (const chunk of stream) chunks.push(chunk);
-  await openSlides(page, Buffer.concat(chunks));
+  page = await openSlides(page, Buffer.concat(chunks));
+  tiles = page.locator('.rail [data-slide]');
+  await page.locator('header [data-action=script]').click();
   for (const [i, note] of [
     'First',
     'Second',

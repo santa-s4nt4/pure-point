@@ -1,3 +1,4 @@
+import { openFileWindow } from './document-window.js';
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { strFromU8, unzipSync } from 'fflate';
@@ -6,8 +7,6 @@ test('Callouts, rectangle corners and text decorations remain editable after a P
   page,
 }, info) => {
   await page.goto('/');
-  await page.locator('[data-action="fileMenu"]').click();
-  await page.locator('.menu [data-action="new"]').click();
   const art = page.locator('.artboard');
   const objects = art.locator(':scope > .scene > [data-id]');
   const box = await art.boundingBox();
@@ -48,7 +47,8 @@ test('Callouts, rectangle corners and text decorations remain editable after a P
   const oval = await callout.locator('.geometry path').getAttribute('d');
   await variant.selectOption('rect');
   await expect(callout.locator('.geometry path')).not.toHaveAttribute('d', /C/);
-  await variant.selectOption('roundRect');
+  await radius.fill('24');
+  await radius.press('Enter');
   await expect(callout.locator('.geometry path')).not.toHaveAttribute(
     'd',
     oval
@@ -74,26 +74,49 @@ test('Callouts, rectangle corners and text decorations remain editable after a P
   );
   await edit.press('Meta+Enter');
 
+  await callout.dblclick();
+  await expect(edit).toBeFocused();
+  const tip = page.locator('.artboard .callout-tip');
+  const initialTip = await tip.boundingBox();
+  const center = {
+    x: initialTip.x + initialTip.width / 2,
+    y: initialTip.y + initialTip.height / 2,
+  };
+  await page.mouse.move(center.x, center.y);
+  await page.mouse.down();
+  await page.mouse.move(center.x + 42, center.y + 16, { steps: 4 });
+  await page.mouse.up();
+  expect((await tip.boundingBox()).x - initialTip.x).toBeCloseTo(42, 0);
+
   const first = await download('callout.pptx');
-  const picker = page.waitForEvent('filechooser');
-  await page.keyboard.press('Meta+o');
-  await (await picker).setFiles(first);
-  await expect(objects).toHaveCount(2);
-  await objects.first().click();
-  await expect(radius).toHaveValue('28');
-  await callout.click();
-  await expect(variant).toHaveValue('roundRect');
-  await expect(callout.locator('.item-text span').first()).toHaveCSS(
-    'text-decoration-line',
-    'underline line-through'
-  );
-  await strike.click();
-  await expect(underline).toHaveAttribute('aria-pressed', 'true');
-  await expect(strike).toHaveAttribute('aria-pressed', 'false');
-  await variant.selectOption('ellipse');
-  await objects.first().click();
-  await radius.fill('0');
-  await radius.press('Enter');
+  page = await openFileWindow(page, first);
+  const reopenedObjects = page.locator('.artboard .scene > [data-id]');
+  const reopenedRadius = page.getByLabel('Corner radius (%)');
+  await expect(reopenedObjects).toHaveCount(2);
+  await reopenedObjects.first().click();
+  await expect(reopenedRadius).toHaveValue('28');
+  await reopenedObjects.last().click();
+  await expect(page.getByLabel('Callout shape')).toHaveValue('rect');
+  await expect(reopenedRadius).toHaveValue('24');
+  expect(
+    (await page.locator('.callout-tip').boundingBox()).x - initialTip.x
+  ).toBeCloseTo(42, 0);
+  await expect(
+    reopenedObjects.last().locator('.item-text span').first()
+  ).toHaveCSS('text-decoration-line', 'underline line-through');
+  const reopenedStrike = page.getByRole('button', {
+    name: 'Strikethrough',
+    exact: true,
+  });
+  await reopenedStrike.click();
+  await expect(
+    page.getByRole('button', { name: 'Underline', exact: true })
+  ).toHaveAttribute('aria-pressed', 'true');
+  await expect(reopenedStrike).toHaveAttribute('aria-pressed', 'false');
+  await page.getByLabel('Callout shape').selectOption('ellipse');
+  await reopenedObjects.first().click();
+  await reopenedRadius.fill('0');
+  await reopenedRadius.press('Enter');
   const second = await download('edited.pptx');
   const xml = strFromU8(
     unzipSync(await readFile(second))['ppt/slides/slide1.xml']
