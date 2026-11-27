@@ -69,8 +69,44 @@ try {
     '<p:sldSz cx="8572500" cy="12382500"'
   );
   expect(strFromU8(saved['ppt/slides/slide1.xml'])).toContain('<a:t>1</a:t>');
+  const opened = context.waitForEvent('page');
+  await page.getByRole('button', { name: 'Open presentation window' }).click();
+  const viewer = await opened;
+  const projected = viewer.locator('.present-frame .scene');
+  await expect(projected.locator('.slide-page-number')).toHaveText('1');
+  await page.bringToFront();
+  await page.locator('.artboard').dblclick({ position: { x: 45, y: 45 } });
+  await page.getByRole('textbox', { name: 'Slide text' }).fill('Live display');
+  await expect(projected).toContainText('Live display');
+  await page.keyboard.press('Control+Enter');
+  await page.getByRole('button', { name: 'Add slide', exact: true }).click();
+  await page.getByRole('button', { name: 'title', exact: true }).click();
+  await expect(projected).toHaveText('');
+  await viewer.bringToFront();
+  await viewer.getByRole('button', { name: 'Enter fullscreen (F)', exact: true }).click();
+  await expect(viewer.getByRole('button', { name: 'Exit fullscreen (F)', exact: true })).toBeVisible();
+  const closed = viewer.waitForEvent('close');
+  await viewer.keyboard.press('Escape').catch((error) => {
+    if (!error.message.includes('has been closed')) throw error;
+  });
+  await closed;
+  await page.bringToFront();
   await page.keyboard.press('Control+n');
   await expect.poll(() => context.pages().length).toBe(2);
+  const second = context.pages().find((candidate) => candidate !== page);
+  await expect(second.locator('#status')).toHaveText('Not saved yet');
+  const secondOpened = context.waitForEvent('page');
+  await second.getByRole('button', { name: 'Open presentation window' }).click();
+  const secondViewer = await secondOpened;
+  await expect(secondViewer.locator('.present-frame .scene')).toBeVisible();
+  await second.bringToFront();
+  const editorClosed = second.waitForEvent('close');
+  const presentationClosed = secondViewer.waitForEvent('close');
+  await second.keyboard.press('Control+w').catch((error) => {
+    if (!error.message.includes('has been closed')) throw error;
+  });
+  await Promise.all([editorClosed, presentationClosed]);
+  await expect(page.locator('.artboard')).toBeVisible();
 } finally {
   await browser?.close();
   app.kill();

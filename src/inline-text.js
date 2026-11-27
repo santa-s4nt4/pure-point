@@ -339,23 +339,39 @@ export function inlineText({ item, object, event, finish, onInput, toLocal }) {
     return bookmark;
   }
   document.addEventListener('selectionchange', remember, options);
+  const inspectorControl = (node) =>
+    node?.closest('#properties,dialog,.inspector [data-action="design"]');
+  function endOnBlur() {
+    if (composing) deferBlur = true;
+    else if (!controller.signal.aborted) finish(false, true);
+  }
   input.addEventListener(
     'blur',
     (e) => {
       caret.hidden = true;
-      if (e.relatedTarget?.closest('#properties,dialog')) {
+      if (inspectorControl(e.relatedTarget)) {
         remember();
         return;
       }
-      if (composing) {
-        deferBlur = true;
-        return;
-      }
-      // The inspector can change typography while this text is selected.
-      if (!controller.signal.aborted) finish(false, true);
+      endOnBlur();
     },
     options
   );
+  document.addEventListener(
+    'focusin',
+    (e) => {
+      if (!input.contains(e.target) && !inspectorControl(e.target)) endOnBlur();
+    },
+    options
+  );
+  function restore(mark) {
+    if (!mark) return;
+    const lines = linesOf(input);
+    document.getSelection().setBaseAndExtent(
+      ...restorePosition(lines, mark[0]),
+      ...restorePosition(lines, mark[1])
+    );
+  }
   input.focus({ preventScroll: true });
   caretAt(input, event, screenRect);
   paintCaret();
@@ -383,19 +399,15 @@ export function inlineText({ item, object, event, finish, onInput, toLocal }) {
         })
       );
     },
-    apply() {
-      if (touched) applyParagraphs(object, editableParagraphs(input, object));
+    apply(target = object) {
+      if (touched) applyParagraphs(target, editableParagraphs(input, object));
     },
     remember,
-    restore(mark) {
-      if (!mark) return;
-      const lines = linesOf(input);
-      document
-        .getSelection()
-        .setBaseAndExtent(
-          ...restorePosition(lines, mark[0]),
-          ...restorePosition(lines, mark[1])
-        );
+    restore,
+    resume(mark = bookmark) {
+      input.focus({ preventScroll: true });
+      restore(mark);
+      paintCaret();
     },
     size() {
       adjust();

@@ -41,11 +41,16 @@ export function workspace(action) {
       <div class="floating-tools" role="toolbar" aria-label="Canvas tools">${tools.map(([id, label]) => action('tool-' + id, label, id, 'tool')).join('')}<i class="divider"></i>${action('gridVisible', 'Layout grid (G)', 'grid', 'tool')}</div>
       <div class="sorter" aria-label="Slide overview" hidden></div>
     </section><section id="script-panel" class="script-panel" aria-label="Speaker notes" hidden>
-      <label for="slide-script">Script</label>
+      <div class="script-resizer" role="separator" tabindex="0" aria-label="Resize script panel" aria-orientation="horizontal" aria-controls="slide-script"></div>
+      <div class="script-header"><label for="slide-script">Script</label><div class="script-font-controls" role="group" aria-label="Script font size">
+        <button type="button" class="icon-btn" data-font-step="-1" aria-label="Decrease script font size" title="Decrease script font size">${icon('minus', 13)}</button>
+        <output aria-label="Script font size"></output>
+        <button type="button" class="icon-btn" data-font-step="1" aria-label="Increase script font size" title="Increase script font size">${icon('plus', 13)}</button>
+      </div></div>
       <textarea id="slide-script" aria-label="Slide script" placeholder="Add speaker notes…"></textarea>
     </section></div>
     <aside id="slide-inspector" class="inspector" aria-label="Inspector"><div class="inspect-tabs"><button class="tab active" data-action="design">Design</button><button class="tab" data-action="layers">Layers</button><button class="tab" data-action="comments">Comments</button></div><div id="properties"></div></aside>
-  </main><footer class="footer"><div class="foot-left"><span id="slide-counter"></span><button type="button" class="icon-btn" data-action="pageNumber" aria-label="Show page number on this slide" title="Show page number on this slide" aria-pressed="false">P</button></div><div class="foot-right">${action('canvasView', 'Slide view', 'slide')}${action('overview', 'Slide overview', 'overview')}<i class="divider"></i>${action('zoomOut', 'Zoom out', 'minus')}<select id="zoom" aria-label="Zoom"><option value="fit">Fit</option><option value="custom" hidden></option>${zoomStops.map((v) => `<option value="${v}">${Math.round(v * 100)}%</option>`).join('')}</select>${action('zoomIn', 'Zoom in', 'plus')}${action('fit', 'Zoom to fit', 'fit')}</div></footer>`;
+  </main><footer class="footer"><div class="foot-left"><span id="slide-counter"></span><button type="button" class="icon-btn" data-action="pageNumber" aria-label="Show page number on this slide" title="Show page number on this slide" aria-pressed="false">P</button></div><div class="foot-right">${action('present', 'Open presentation window', 'play')}${action('canvasView', 'Slide view', 'slide')}${action('overview', 'Slide overview', 'overview')}<i class="divider"></i>${action('zoomOut', 'Zoom out', 'minus')}<select id="zoom" aria-label="Zoom"><option value="fit">Fit</option><option value="custom" hidden></option>${zoomStops.map((v) => `<option value="${v}">${Math.round(v * 100)}%</option>`).join('')}</select>${action('zoomIn', 'Zoom in', 'plus')}${action('fit', 'Zoom to fit', 'fit')}</div></footer>`;
 }
 
 export function bindAppearance(select) {
@@ -158,6 +163,77 @@ export function bindRailResize(handle) {
       localStorage.setItem('pure-point.rail-width', width);
     }
   };
+}
+
+export function bindScriptPanel(panel) {
+  const handle = panel.querySelector('.script-resizer');
+  const notes = panel.querySelector('textarea');
+  const sizeLabel = panel.querySelector('output');
+  const buttons = [...panel.querySelectorAll('[data-font-step]')];
+  const heightKey = 'pure-point.script-height';
+  const fontKey = 'pure-point.script-font-size';
+  const minHeight = 80;
+  const maxHeight = () => Math.floor(panel.parentElement.clientHeight * 0.7);
+  let fontSize = Number(localStorage.getItem(fontKey)) || 13;
+  const savedHeight = Number(localStorage.getItem(heightKey));
+  if (savedHeight >= minHeight)
+    panel.style.setProperty('--script-height', savedHeight + 'px');
+
+  function setFontSize(value) {
+    fontSize = Math.max(9, Math.min(36, value));
+    notes.style.fontSize = fontSize + 'px';
+    sizeLabel.value = fontSize + ' px';
+    buttons[0].disabled = fontSize === 9;
+    buttons[1].disabled = fontSize === 36;
+  }
+  setFontSize(fontSize);
+  for (const button of buttons) {
+    button.addEventListener('click', () => {
+      setFontSize(fontSize + Number(button.dataset.fontStep));
+      localStorage.setItem(fontKey, fontSize);
+    });
+  }
+
+  const height = () => Math.round(panel.getBoundingClientRect().height);
+  function setHeight(value) {
+    const limit = Math.max(minHeight, maxHeight());
+    const next = Math.max(minHeight, Math.min(limit, Math.round(value)));
+    panel.style.setProperty('--script-height', next + 'px');
+    return next;
+  }
+  handle.setAttribute('aria-valuemin', minHeight);
+  const observer = new ResizeObserver(() => {
+    if (panel.hidden) return;
+    handle.setAttribute('aria-valuenow', height());
+    handle.setAttribute('aria-valuemax', Math.max(minHeight, maxHeight()));
+  });
+  observer.observe(panel);
+  observer.observe(panel.parentElement);
+
+  let drag;
+  handle.addEventListener('pointerdown', (e) => {
+    if (drag || e.button !== 0) return;
+    e.preventDefault();
+    drag = { id: e.pointerId, y: e.clientY, height: height() };
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add('dragging');
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (drag?.id === e.pointerId) setHeight(drag.height + drag.y - e.clientY);
+  });
+  handle.addEventListener('lostpointercapture', (e) => {
+    if (drag?.id !== e.pointerId) return;
+    drag = null;
+    handle.classList.remove('dragging');
+    if (!panel.hidden) localStorage.setItem(heightKey, height());
+  });
+  handle.addEventListener('keydown', (e) => {
+    if (!['ArrowUp', 'ArrowDown'].includes(e.key)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const next = setHeight(height() + (e.key === 'ArrowUp' ? 12 : -12));
+    localStorage.setItem(heightKey, next);
+  });
 }
 
 // Handle WebKit gesture events, Chromium trackpad wheel events and two touch pointers.

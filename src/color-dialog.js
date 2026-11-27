@@ -52,10 +52,10 @@ function cssColor(value) {
 
 export function chooseColor(
   anchor,
-  { colors, allowNone, onPreview, onCommit, onUndo }
+  { colors, allowNone, onPreview, onCommit, onUndo, restoreFocus }
 ) {
   if (openPicker?.anchor === anchor) {
-    closeColorPicker();
+    openPicker(true);
     return;
   }
   closeColorPicker();
@@ -338,9 +338,10 @@ export function chooseColor(
     openPicker = null;
     dialog.close();
     dialog.remove();
-    if (focus && anchor.isConnected) anchor.focus({ preventScroll: true });
+    if (focus && restoreFocus) restoreFocus();
+    else if (focus && anchor.isConnected) anchor.focus({ preventScroll: true });
   }
-  openPicker = () => close(false);
+  openPicker = close;
   openPicker.anchor = anchor;
   $('.paint-close').onclick = () => close(true);
   dialog.onkeydown = (e) => {

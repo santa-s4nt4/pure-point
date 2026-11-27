@@ -1,0 +1,11 @@
+{
+  "identifier": "presentation",
+  "description": "Live presentation window",
+  "windows": ["presentation-*"],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-close",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-set-fullscreen"
+  ]
+}

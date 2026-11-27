@@ -3,7 +3,7 @@ import { retainMovies, releaseMovies } from './platform.js';
 
 // Asset paths are only meaningful inside the PPTX package they came from.
 // Nested pictures, posters and movies may refer to the same physical part.
-function mediaReferences(items, visit) {
+export function mediaReferences(items, visit) {
   for (const item of items) {
     if (item.kind === 'image' || item.kind === 'video') {
       if (item.asset) visit(item, 'asset');

@@ -157,14 +157,59 @@
   color: #37373e;
 }
 .script-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  flex: 0 0 clamp(80px, 15vh, 148px);
+  flex: 0 0 var(--script-height, clamp(80px, 15vh, 148px));
+  max-height: 70%;
   min-height: 0;
   padding: 10px 16px;
   background: white;
   border-top: 1px solid var(--line);
+}
+.script-resizer {
+  position: absolute;
+  z-index: 5;
+  top: -5px;
+  left: 0;
+  right: 0;
+  height: 10px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.script-resizer::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: calc(50% - 15px);
+  width: 30px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--muted);
+}
+.script-resizer:is(:hover, :focus-visible, .dragging)::after {
+  left: 0;
+  width: 100%;
+  background: var(--blue);
+}
+.script-header,
+.script-font-controls {
+  display: flex;
+  align-items: center;
+}
+.script-header {
+  gap: 8px;
+}
+.script-font-controls .icon-btn {
+  width: 20px;
+  height: 20px;
+}
+.script-font-controls output {
+  min-width: 32px;
+  color: var(--muted);
+  font-size: 10px;
+  text-align: center;
 }
 .script-panel label {
   font-weight: 600;

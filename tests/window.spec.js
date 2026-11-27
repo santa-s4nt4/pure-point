@@ -79,6 +79,43 @@ test('The titlebar controls the workspace and keeps the document menu accessible
   await expect(header.locator('#status')).toHaveText('Unsaved changes');
 });
 
+test('The Script separator and font controls resize the notes view', async ({ page }) => {
+  await page.goto('/');
+  const toggle = page.getByRole('button', { name: 'Toggle script' });
+  const handle = page.getByRole('separator', { name: 'Resize script panel' });
+  const panel = page.getByRole('region', { name: 'Speaker notes' });
+  const notes = page.getByRole('textbox', { name: 'Slide script' });
+  await expect(handle).toBeHidden();
+  await toggle.click();
+  const initial = await panel.boundingBox();
+  const hit = await handle.boundingBox();
+  const x = hit.x + hit.width / 2;
+  const y = hit.y + hit.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y - 110, { steps: 6 });
+  await page.mouse.up();
+  const expanded = await panel.boundingBox();
+  expect(expanded.height).toBeCloseTo(initial.height + 110, 0);
+  await handle.press('ArrowDown');
+  expect((await panel.boundingBox()).height).toBeCloseTo(expanded.height - 12, 0);
+
+  const decrease = page.getByRole('button', { name: 'Decrease script font size' });
+  const increase = page.getByRole('button', { name: 'Increase script font size' });
+  await expect(notes).toHaveCSS('font-size', '13px');
+  await decrease.click();
+  await expect(notes).toHaveCSS('font-size', '12px');
+  await increase.click();
+  await increase.click();
+  await expect(notes).toHaveCSS('font-size', '14px');
+  await expect(page.locator('#status')).toHaveText('Not saved yet');
+
+  await page.reload();
+  await toggle.click();
+  await expect(notes).toHaveCSS('font-size', '14px');
+  expect((await panel.boundingBox()).height).toBeCloseTo(expanded.height - 12, 0);
+});
+
 test('Edits made while the ZIP is writing remain unsaved and undo to the saved revision', async ({
   page,
 }) => {

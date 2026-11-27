@@ -9,6 +9,7 @@ mod package;
 #[cfg(target_os = "macos")]
 mod pdf;
 mod player;
+mod presentation;
 #[cfg(target_os = "macos")]
 mod sharing;
 #[cfg(windows)]
@@ -325,6 +326,9 @@ fn main() {
         });
     builder
         .on_window_event(|win, event| {
+            if presentation::window_event(win, event) {
+                return;
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = win.emit_to(win.label(), "editor-command", "close");
@@ -361,6 +365,7 @@ fn main() {
             #[cfg(windows)]
             windows::reveal_share_document,
             player::youtube_player_url,
+            presentation::open_presentation,
             movies::pick_movie,
             movies::start_movie_upload,
             movies::append_movie_chunk,

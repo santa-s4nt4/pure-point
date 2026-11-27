@@ -33,7 +33,7 @@ export function bindNumberFields(panel, { begin, preview, finish, available }) {
       (+input.value || 0) +
         (e.key === 'ArrowUp' ? 1 : -1) * step(input, e.shiftKey)
     );
-    finish(input);
+    finish(input, true);
   });
   let drag;
   panel.addEventListener('pointerdown', (e) => {

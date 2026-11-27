@@ -44,6 +44,7 @@ import {
   animateLogo,
   bindAppearance,
   bindRailResize,
+  bindScriptPanel,
   bindPinch,
   zoomStops,
 } from './workspace.js';
@@ -72,11 +73,20 @@ import { inlineText } from './inline-text.js';
 import {
   blankDeck, designUnit, hasTextFrame, slide, slideSizes, textItem, uid,
 } from './model.js';
-import { pageNumberFont } from './page-numbers.js';
+import { pageNumbers } from './page-numbers.js';
+import { presentationControl } from './presentation.js';
+import { loadSlideFonts as prepareSlideFonts } from './slide-fonts.js';
 import { importDeck } from './import.js';
-import { japaneseSubstitute, objectDecoration, runFontFor } from './text-runs.js';
+import { objectDecoration, runFontFor } from './text-runs.js';
 import { exportDeck } from './export.js';
 import { defaults, snapAxis, snapTargets } from './grid.js';
+import {
+  appendSpacing,
+  objectSpacing,
+  snapMovement,
+  stationaryBounds,
+} from './canvas-arrange.js';
+import './canvas-arrange.css';
 import { el, gridOverlay, icon, itemNode, scene } from './view.js';
 import { esc } from './xml.js';
 import * as platform from './platform.js';
@@ -85,6 +95,7 @@ const $ = (s) => document.querySelector(s);
 const action = (id, label, glyph, cls = 'icon-btn', content = false) =>
   `<button type="button" class="${cls}" data-action="${id}" aria-label="${esc(label)}" title="${esc(label)}">${icon(glyph)}${content ? esc(label) : ''}</button>`;
 const fileTitle = () => (path ? platform.fileName(path) : title);
+const loadSlideFonts = (slide) => prepareSlideFonts(slide, fonts);
 const active = () => deck.slides[index],
   selected = () =>
     selection ? layerEntries(active().items).get(selection)?.object : undefined;
@@ -103,7 +114,6 @@ let tool = 'pointer',
   fonts = [],
   grid = { ...defaults },
   busy = true,
-  present = false,
   editor = null,
   cropEdit = null;
 let panOrigin = null;
@@ -125,6 +135,7 @@ const root = $('#app');
 document.body.classList.toggle('native-mac', platform.nativeMac);
 root.innerHTML = workspace(action);
 bindAppearance($('#appearance'));
+const presentation = presentationControl(presentationSnapshot, movePresentation);
 const commentDrafts = new Map();
 const scriptField = $('#slide-script');
 const shareButton = $('[data-action="copyShareLink"]');
@@ -152,6 +163,7 @@ const railSlides = slideBrowser($('.thumbs'), { prepareSlide: loadSlideFonts }),
   });
 animateLogo($('#floating-p'));
 bindRailResize($('.rail-resizer'));
+bindScriptPanel($('#script-panel'));
 for (const [action, panel] of [
   ['navigator', 'slide-navigator'],
   ['script', 'script-panel'],
@@ -364,6 +376,7 @@ function restore(from, to) {
   render();
 }
 function status() {
+  presentation.publish();
   shareButton.disabled = busy || Boolean(sharingPath);
   const dirty =
     currentRevision !== savedRevision ||
@@ -446,7 +459,7 @@ function updateZoomLabel() {
     (overview ? '' : ' · ' + Math.round((scale / designUnit) * 100) + '%');
 }
 function zoomAt(factor, clientX, clientY) {
-  if (present || !Number.isFinite(factor) || factor <= 0) return;
+  if (!Number.isFinite(factor) || factor <= 0) return;
   if (overview) {
     const host = $('.sorter'),
       r = host.getBoundingClientRect();
@@ -725,11 +738,17 @@ function drawSelection() {
       height: b.h + 'px',
     });
     layer.append(box);
+    if (selectedIds().length === 2) {
+      const axis = drag?.mode === 'spacing' ? drag.axis : undefined;
+      const spacing = objectSpacing(entries, axis);
+      if (spacing) appendSpacing(layer, spacing, scale);
+    }
   }
   sc.append(layer);
 }
 function renderBoard() {
   if (cropEdit) finishCrop();
+  presentation.publish();
   loadSlideFonts(active());
   const sc = scene(active(), deck, assets, true);
   $('.artboard').replaceChildren(sc);
@@ -797,8 +816,19 @@ function layerAction(action, id) {
     });
   }
 }
-const field = (label, key, value, min, max, scope = 'object') =>
-  `<label class="field">${label}<input aria-label="${label}" type="number" step="any" data-scope="${scope}" data-field="${key}" value="${Number((Number(value) * dimension(key)).toFixed(2))}" min="${min * dimension(key)}" max="${max * dimension(key)}"></label>`;
+const wrapAngle = (angle) => {
+  const degrees = angle % 360;
+  if (degrees < -180) return degrees + 360;
+  if (degrees > 180) return degrees - 360;
+  return degrees;
+};
+function field(label, key, value, min, max, scope = 'object') {
+  const factor = dimension(key);
+  const input = `<input aria-label="${label}" type="number" step="any" data-scope="${scope}" data-field="${key}" value="${Number((Number(value) * factor).toFixed(2))}" min="${min * factor}" max="${max * factor}">`;
+  if (key === 'rotation')
+    return `<label class="field">Rotation<span class="angle-input" title="Counterclockwise angle">${icon('rotation', 12)}${input}<span aria-hidden="true">°</span></span></label>`;
+  return `<label class="field">${label}${input}</label>`;
+}
 const paintLabel = (color) => {
   if (!color) return 'None';
   const opacity =
@@ -818,10 +848,15 @@ function editPaint(button) {
   const styles = [target];
   if (key === 'color')
     for (const p of target.paragraphs || []) styles.push(p.base, ...p.runs);
+  const editing = editor?.o === target ? editor : null;
+  const mark = editing?.remember();
   let before;
   chooseColor(button, {
     colors: documentColors(deck, active()),
     allowNone: key === 'fill' || key === 'stroke',
+    restoreFocus: editing ? () => {
+      if (editor === editing) editing.resume(mark);
+    } : undefined,
     onPreview(value) {
       if (styles.every((style) => (style[key] ?? null) === value)) return;
       before ??= snapshot();
@@ -829,6 +864,7 @@ function editPaint(button) {
       button.dataset.value = value || '';
       button.querySelector('i').style.background = value || 'transparent';
       button.querySelector('span').textContent = paintLabel(value);
+      presentation.publish();
       if (key === 'bg') $('.artboard > .scene').style.background = value;
       else {
         const node = $('.artboard [data-id="' + CSS.escape(target.id) + '"]');
@@ -1008,7 +1044,7 @@ function properties() {
           '<div class="layer-set">' +
           options +
           '</div>'
-      ) + gridPanel();
+      );
     return;
   }
   if (!o) {
@@ -1028,7 +1064,8 @@ function properties() {
       field('X (px)', 'x', o.x, -100000, 100000) +
       field('Y (px)', 'y', o.y, -100000, 100000) +
       field('Width (px)', 'w', o.w, 0.1, 100000) +
-      field('Height (px)', 'h', o.h, 0.1, 100000);
+      field('Height (px)', 'h', o.h, 0.1, 100000) +
+      field('Rotation (°)', 'rotation', wrapAngle(-o.rotation), -360, 360);
     let html = section(
       'Position',
       `${alignControls()}<div class="form-grid">${fields}</div>`,
@@ -1103,7 +1140,7 @@ function properties() {
         'PowerPoint object',
         '<p class="hint">Simplified preview. The original object is preserved in PowerPoint.</p>'
       );
-    container.innerHTML = html + gridPanel();
+    container.innerHTML = html;
   }
 }
 function render(refreshPreview = true) {
@@ -1116,46 +1153,6 @@ function render(refreshPreview = true) {
   renderBoard();
   properties();
   status();
-}
-function loadSlideFonts(slide) {
-  if (!platform.native || !fonts.length) return;
-  const names = new Map();
-  function collect(o) {
-    if (!o) return;
-    for (const font of [
-      o.font,
-      o.eastAsianFont,
-      japaneseSubstitute(o),
-      japaneseSubstitute(o, true),
-      o.fallbackFont,
-      o.eastAsianFallback,
-    ]) {
-      if (font)
-        names.set(JSON.stringify([font, o.bold, o.italic]), [
-          font,
-          o.bold,
-          o.italic,
-        ]);
-    }
-  }
-  function paragraph(p) {
-    collect(p.base);
-    p.runs.forEach(collect);
-  }
-  function visit(o) {
-    if (hasTextFrame(o)) {
-      collect(o);
-      o.paragraphs?.forEach(paragraph);
-    }
-    for (const row of o.table?.rows || [])
-      for (const cell of row.cells) cell.paragraphs.forEach(paragraph);
-    o.items?.forEach(visit);
-  }
-  slide.items.forEach(visit);
-  slide.back.forEach(visit);
-  if (slide.showPageNumber) collect({ font: pageNumberFont });
-  for (const [font, bold, italic] of names.values())
-    platform.loadTypeface(font, fonts, bold, italic);
 }
 function setTool(value) {
   if (drag?.mode === 'draw-vector' || drag?.mode === 'vertex')
@@ -1193,14 +1190,53 @@ function updateObject(key, value) {
       : paragraphStyle && p[key] !== value
   );
   if (o[key] === value && !mixed) return;
+  changeObject(o, () => {
+    const intrinsic =
+      o.autoWidth && (runStyle || paragraphStyle) && measureTextBox(o);
+    o[key] = value;
+    if (o.kind === 'callout') {
+      if (key === 'cornerRadius') o.calloutShape = value ? 'roundRect' : 'rect';
+      if (key === 'calloutShape' && value === 'rect' && o.cornerRadius > 0)
+        o.calloutShape = 'roundRect';
+    }
+    if (key === 'font') {
+      o.eastAsianFont = value;
+      o.fontCharset = o.eastAsianCharset = '';
+    }
+    if (key === 'w' && o.autoWidth) o.autoWidth = false;
+    if (
+      ['dash', 'strokeWidth', 'startArrow', 'endArrow'].includes(key) &&
+      !o.stroke
+    )
+      o.stroke = '#222521';
+    for (const p of o.paragraphs || []) {
+      if (paragraphStyle) p[key] = value;
+      if (runStyle)
+        for (const style of [p.base, ...p.runs]) {
+          style[key] = value;
+          if (key === 'font') {
+            style.eastAsianFont = value;
+            style.fontCharset = style.eastAsianCharset = '';
+          }
+        }
+    }
+    if (intrinsic) {
+      const after = measureTextBox(o);
+      o.w = Math.max(2, o.w + after.w - intrinsic.w);
+      o.h = Math.max(1, o.h + after.h - intrinsic.h);
+    }
+  });
+}
+function changeObject(o, apply) {
   const editing = editor?.o === o ? editor : null;
   const before =
     editing?.creation?.before || numberAdjustment?.before || snapshot();
   const mark = editing?.remember();
+  const textChanged = editing?.changed();
   if (editing) {
     const text = editing.read();
     editor = null;
-    if (editing.changed()) {
+    if (textChanged) {
       if (o.autoWidth) Object.assign(o, editing.size());
       editing.apply();
     }
@@ -1208,42 +1244,9 @@ function updateObject(key, value) {
     if (o.kind === 'text' && !o.placeholder)
       o.name = text.slice(0, 40) || 'Text';
   }
-  const intrinsic =
-    o.autoWidth && (runStyle || paragraphStyle) && measureTextBox(o);
-  o[key] = value;
-  if (o.kind === 'callout') {
-    if (key === 'cornerRadius') o.calloutShape = value ? 'roundRect' : 'rect';
-    if (key === 'calloutShape' && value === 'rect' && o.cornerRadius > 0)
-      o.calloutShape = 'roundRect';
-  }
-  if (key === 'font') {
-    o.eastAsianFont = value;
-    o.fontCharset = o.eastAsianCharset = '';
-  }
-  if (key === 'w' && o.autoWidth) o.autoWidth = false;
-  if (
-    ['dash', 'strokeWidth', 'startArrow', 'endArrow'].includes(key) &&
-    !o.stroke
-  )
-    o.stroke = '#222521';
-  for (const p of o.paragraphs || []) {
-    if (paragraphStyle) p[key] = value;
-    if (runStyle)
-      for (const style of [p.base, ...p.runs]) {
-        style[key] = value;
-        if (key === 'font') {
-          style.eastAsianFont = value;
-          style.fontCharset = style.eastAsianCharset = '';
-        }
-      }
-  }
-  if (intrinsic) {
-    const after = measureTextBox(o);
-    o.w = Math.max(2, o.w + after.w - intrinsic.w);
-    o.h = Math.max(1, o.h + after.h - intrinsic.h);
-  }
+  const changed = apply();
   const provisional = editing?.creation && !o.text;
-  if (!provisional) record(before);
+  if (!provisional && (changed !== false || textChanged)) record(before);
   render();
   if (editing) {
     startText();
@@ -1267,7 +1270,6 @@ function switchSlide(i) {
   $('.select-slide.active')?.scrollIntoView({ block: 'nearest' });
   if (overview)
     $('.sorter [data-slide="' + i + '"]')?.scrollIntoView({ block: 'nearest' });
-  if (present) drawPresentation();
 }
 function addObject(o) {
   change(() => {
@@ -1300,7 +1302,6 @@ function visibleSlide() {
 
 const clipboardAvailable = (target) =>
   !busy &&
-  !present &&
   !editor &&
   !drag &&
   !document.querySelector('dialog[open]') &&
@@ -1598,26 +1599,22 @@ document.addEventListener(
     if (!e.target.closest('.crop-source,.crop-actions'))
       finishCrop(true, !!e.target.closest('#properties'));
     if (!editor || editor.input.contains(e.target)) return;
+    const designControl =
+      tab === 'design' &&
+      e.target.closest('#properties,.inspector [data-action="design"]');
+    if (designControl || e.target.closest('dialog')) {
+      editor.remember();
+      // WebKit can blur the editor to the body when clicking an inspector button.
+      if (
+        designControl &&
+        !editor.composing &&
+        !e.target.closest('input,select,textarea')
+      )
+        e.preventDefault();
+      return;
+    }
     if (editor.composing) {
       editor.input.blur();
-      return;
-    }
-    if (
-      e.target.closest(
-        '[data-font],[data-line-spacing],[data-vector-field="calloutShape"],[data-field="cornerRadius"],[data-field="letterSpacing"],[data-field="size"],[data-color],[data-action="bold"],[data-action="italic"],[data-action="underline"],[data-action="strike"],[data-action^="align"],dialog'
-      )
-    ) {
-      editor.remember();
-      return;
-    }
-    if (
-      e.target
-        .closest('label.field')
-        ?.querySelector(
-          '[data-field="size"],[data-field="cornerRadius"],[data-field="letterSpacing"]'
-        )
-    ) {
-      editor.remember();
       return;
     }
     if (e.target.closest('.callout-tip')) return;
@@ -1977,7 +1974,6 @@ bindSlideList($('.sorter'), overviewSlides);
 function objectMenu(e) {
   if (
     busy ||
-    present ||
     e.target.closest(
       'input,textarea,[contenteditable="true"],.sorter,.floating-tools'
     )
@@ -2053,8 +2049,7 @@ if (platform.native)
     ({ detail: { factor, x, y } }) => {
       if (
         !busy &&
-        !present &&
-        document.elementFromPoint(x, y)?.closest('.stage') &&
+              document.elementFromPoint(x, y)?.closest('.stage') &&
         !document.querySelector('dialog[open]')
       )
         zoomAt(factor, x, y);
@@ -2119,47 +2114,33 @@ async function openInitialFile() {
     if (file) await platform.release(file);
   }
 }
-function drawPresentation() {
-  loadSlideFonts(active());
-  const host = $('.present'),
-    s = scene(active(), deck, assets, 'present'),
-    ratio = Math.min(innerWidth / deck.w, innerHeight / deck.h);
-  const frame = el('div', 'present-frame');
-  Object.assign(frame.style, {
-    width: deck.w * ratio + 'px',
-    height: deck.h * ratio + 'px',
-  });
-  s.style.transform = `scale(${ratio})`;
-  frame.append(s);
-  host.replaceChildren(frame);
-  const controls = el('div', 'present-controls');
-  controls.innerHTML =
-    action('prev', 'Previous slide', 'left') +
-    `<span>${index + 1} / ${deck.slides.length}</span>` +
-    action('next', 'Next slide', 'right') +
-    action('endPresent', 'End presentation (Esc)', 'close');
-  host.append(controls);
-}
-async function showPresentation(on) {
-  finishText();
-  if (on && active().hidden) {
-    const start = deck.slides.findIndex((s, i) => i >= index && !s.hidden);
-    const first = start < 0 ? deck.slides.findIndex((s) => !s.hidden) : start;
-    if (first < 0) {
-      toast('All slides are hidden.');
-      return;
-    }
-    switchSlide(first);
+function presentationSnapshot() {
+  const { id, bg, back, showPageNumber } = active();
+  let { items } = active();
+  if (editor?.changed()) {
+    const draft = structuredClone(editor.o);
+    editor.apply(draft);
+    if (draft.autoWidth) Object.assign(draft, editor.size());
+    const withDraft = (layers) => layers.map((item) => {
+      if (item.id === draft.id) return draft;
+      return item.items ? { ...item, items: withDraft(item.items) } : item;
+    });
+    items = withDraft(items);
   }
-  present = on;
-  if (on) {
-    const host = el('div', 'present');
-    document.body.append(host);
-    drawPresentation();
-  } else $('.present')?.remove();
-  try {
-    await platform.fullScreen(on);
-  } catch {}
+  if (drag?.moved && drag.mode === 'draw-vector')
+    items = [...items, drag.draft];
+  return {
+    w: deck.w, h: deck.h,
+    number: showPageNumber ? pageNumbers(deck).get(id) : null,
+    slide: { id, bg, back, items, showPageNumber },
+    assets,
+  };
+}
+function movePresentation(step) {
+  if (busy || (step !== 1 && step !== -1)) return;
+  let next = index + step;
+  while (deck.slides[next]?.hidden) next += step;
+  switchSlide(next);
 }
 async function execute(id, button) {
   finishCrop();
@@ -2274,7 +2255,16 @@ async function execute(id, button) {
     restore(id === 'undo' ? history : future, id === 'undo' ? future : history);
     return;
   }
-  if (!Object.hasOwn(textActions, id)) finishText();
+  if (id === 'delete' && editor?.creation) {
+    finishText(true);
+    return;
+  }
+  if (
+    !Object.hasOwn(textActions, id) &&
+    !id.startsWith('objectAlign-') &&
+    id !== 'design'
+  )
+    finishText();
   if (
     [
       'save',
@@ -2347,18 +2337,17 @@ async function execute(id, button) {
     return;
   }
   if (id.startsWith('objectAlign-')) {
-    const moves = alignmentMoves(
-      selectedEntries(),
-      id.slice('objectAlign-'.length),
-      deck
-    );
-    if (moves.length)
-      change(() => {
-        for (const { object, delta } of moves) {
-          object.x += delta.x;
-          object.y += delta.y;
-        }
-      });
+    const object = selected();
+    if (!object) return;
+    const direction = id.slice('objectAlign-'.length);
+    changeObject(object, () => {
+      const moves = alignmentMoves(selectedEntries(), direction, deck);
+      for (const { object, delta } of moves) {
+        object.x += delta.x;
+        object.y += delta.y;
+      }
+      return Boolean(moves.length);
+    });
     return;
   }
   if (id === 'front' || id === 'back') {
@@ -2478,15 +2467,8 @@ async function execute(id, button) {
     updateGrid('snap', !grid.snap);
     return;
   }
-  if (id === 'present' || id === 'endPresent') {
-    await showPresentation(id === 'present');
-    return;
-  }
-  if (id === 'prev' || id === 'next') {
-    const step = id === 'next' ? 1 : -1;
-    let next = index + step;
-    while (present && deck.slides[next]?.hidden) next += step;
-    switchSlide(next);
+  if (id === 'present') {
+    await presentation.open();
     return;
   }
   if (id === 'fit') {
@@ -2580,18 +2562,25 @@ bindNumberFields($('#properties'), {
   available: () => !busy,
   begin(input) {
     numberAdjustment = {
-      before: input.dataset.scope === 'grid' ? null : snapshot(),
+      before: input.dataset.scope === 'grid'
+        ? null
+        : editor?.creation?.before || snapshot(),
     };
   },
   preview(input) {
     input.dispatchEvent(new Event('change', { bubbles: true }));
   },
-  finish(input) {
+  finish(input, keepFieldFocus) {
     const { before } = numberAdjustment;
     numberAdjustment = null;
-    if (before && before.deck !== JSON.stringify(deck)) record(before);
+    if (before && !editor?.creation && before.deck !== JSON.stringify(deck))
+      record(before);
     renderThumbs();
     properties();
+    if (editor && !keepFieldFocus) {
+      editor.resume();
+      return;
+    }
     $(
       '#properties input[aria-label="' + CSS.escape(input.ariaLabel) + '"]'
     )?.focus({ preventScroll: true });
@@ -2622,7 +2611,9 @@ document.addEventListener('change', (e) => {
       !entry.locked &&
       (percent === null || Number.isFinite(percent))
     )
-      change(() => setCurvature(entry.object, vectorEdit?.selected, percent));
+      changeObject(entry.object, () => {
+        setCurvature(entry.object, vectorEdit?.selected, percent);
+      });
     else properties();
     return;
   }
@@ -2648,6 +2639,7 @@ document.addEventListener('change', (e) => {
   if (key) {
     if (!input.value.trim() || !Number.isFinite(input.valueAsNumber)) {
       properties();
+      editor?.resume();
       return;
     }
     let v = Math.min(
@@ -2658,6 +2650,10 @@ document.addEventListener('change', (e) => {
     if (scope === 'grid') {
       if (['columns', 'rows'].includes(key)) v = Math.round(v);
       updateGrid(key, v);
+    } else if (key === 'rotation') {
+      const degrees = wrapAngle(v);
+      if (!numberAdjustment) input.value = degrees;
+      updateObject(key, -degrees);
     } else updateObject(key, v);
   }
   if (color === 'bg') {
@@ -2766,6 +2762,27 @@ $('.stage').addEventListener('pointerdown', (e) => {
     e.preventDefault();
     return;
   }
+  const spacingHandle = e.target.closest('[data-spacing-handle]');
+  if (spacingHandle) {
+    const spacing = objectSpacing(
+      selectedEntries(), spacingHandle.dataset.spacingHandle
+    );
+    if (!spacing) return;
+    const { entry, axis, gap } = spacing;
+    const { x, y } = entry.object;
+    drag = {
+      mode: 'spacing',
+      id: e.pointerId,
+      start: p,
+      axis,
+      gap,
+      sources: [{ entry, from: { x, y } }],
+      moved: false,
+    };
+    e.preventDefault();
+    $('.stage').setPointerCapture(e.pointerId);
+    return;
+  }
   if (vectorEdit) {
     if (e.target.closest('[data-id]')?.dataset.id === vectorEdit.id) {
       e.preventDefault();
@@ -2818,29 +2835,17 @@ $('.stage').addEventListener('pointerdown', (e) => {
         : {}),
     },
   }));
-  const excluded = new Set(entries.map((entry) => entry.object.id));
-  // Compare the selection box with visible siblings in slide coordinates.
-  const visible = active().items.filter(
-    (o) =>
-      !o.hidden &&
-      !excluded.has(o.id) &&
-      !entries.some((e) => {
-        let parent = e.parent;
-        while (parent) {
-          if (parent.object === o) return true;
-          parent = parent.parent;
-        }
-        return false;
-      })
-  );
+  const stationary = stationaryBounds(all, entries);
   drag = {
     id: e.pointerId,
     mode: 'objects',
     start: p,
     sources,
     box: selectionBounds(entries),
+    moving: entries.map(layerBounds),
+    stationary,
     handle: handle?.dataset.handle,
-    targets: snapTargets(deck, { items: visible }, null, grid),
+    targets: snapTargets(deck, { items: handle ? stationary : [] }, null, grid),
     collapse: !added && entries.length > 1 ? hit?.object.id : null,
     moved: false,
   };
@@ -2848,6 +2853,7 @@ $('.stage').addEventListener('pointerdown', (e) => {
 function guides(x, y) {
   const sc = $('.artboard>.scene');
   sc.querySelector('.guide-layer')?.remove();
+  if (x == null && y == null) return;
   const layer = el('div', 'guide-layer');
   for (const [v, isX] of [
     [x, true],
@@ -2855,23 +2861,77 @@ function guides(x, y) {
   ])
     if (v != null) {
       const n = el('i', 'guide-line ' + (isX ? 'v' : 'h'));
-      n.style[isX ? 'left' : 'top'] = v + 'px';
+      if (typeof v === 'number') {
+        n.style[isX ? 'left' : 'top'] = v + 'px';
+      } else {
+        n.classList.add('object-guide');
+        Object.assign(n.style, {
+          left: (isX ? v.position : v.start) + 'px',
+          top: (isX ? v.start : v.position) + 'px',
+          [isX ? 'height' : 'width']: v.end - v.start + 'px',
+        });
+      }
       layer.append(n);
     }
   sc.append(layer);
 }
+function moveObjects(sources, x, y) {
+  for (const { entry, from } of sources) {
+    const delta = localDelta(entry.transform, x, y);
+    const o = entry.object;
+    o.x = from.x + delta.x;
+    o.y = from.y + delta.y;
+    const node = $('.artboard [data-id="' + o.id + '"]');
+    if (node) Object.assign(node.style, { left: o.x + 'px', top: o.y + 'px' });
+  }
+}
+$('.stage').addEventListener('keydown', (e) => {
+  const axis = e.target.dataset.spacingHandle;
+  if (!axis || busy || drag) return;
+  const keys = axis === 'x' ? ['ArrowLeft', 'ArrowRight'] : ['ArrowUp', 'ArrowDown'];
+  const direction = keys.indexOf(e.key);
+  if (direction < 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const spacing = objectSpacing(selectedEntries(), axis);
+  if (!spacing) return;
+  const { entry, gap } = spacing;
+  const step = (e.shiftKey ? 10 : 1) / designUnit;
+  const distance = Math.max(-gap, direction ? step : -step);
+  if (!distance) return;
+  const delta = localDelta(
+    entry.transform, axis === 'x' ? distance : 0, axis === 'y' ? distance : 0
+  );
+  change(() => {
+    entry.object.x += delta.x;
+    entry.object.y += delta.y;
+  });
+  $('[data-spacing-handle="' + axis + '"]')?.focus({ preventScroll: true });
+});
 window.addEventListener('pointermove', (e) => {
   if (!drag || e.pointerId !== drag.id) return;
   const p = coordinates(e),
     dx = p.x - drag.start.x,
     dy = p.y - drag.start.y;
+  const spacingDelta = drag.axis === 'x' ? dx : dy;
   if (!drag.moved) {
-    if (Math.hypot(dx, dy) * scale < 3) return;
+    const distance =
+      drag.mode === 'spacing' ? Math.abs(spacingDelta) : Math.hypot(dx, dy);
+    if (distance * scale < 3) return;
     // A simple click selects a layer without making a document undo entry.
-    if (['objects', 'vertex', 'callout-tip'].includes(drag.mode))
+    if (['objects', 'vertex', 'callout-tip', 'spacing'].includes(drag.mode))
       drag.before = snapshot();
     drag.moved = true;
     $('.stage').setPointerCapture(e.pointerId);
+  }
+  if (drag.mode === 'spacing') {
+    const horizontal = drag.axis === 'x';
+    const distance = Math.max(-drag.gap, spacingDelta);
+    moveObjects(
+      drag.sources, horizontal ? distance : 0, horizontal ? 0 : distance
+    );
+    drawSelection();
+    return;
   }
   if (drag.mode === 'callout-tip') {
     const { o, inverse, initial } = drag;
@@ -2956,25 +3016,12 @@ window.addEventListener('pointermove', (e) => {
   let gx = null,
     gy = null;
   if (!handle) {
-    const x = box.x + dx,
-      y = box.y + dy;
-    const sx = snap
-      ? snapAxis([x, x + box.w / 2, x + box.w], targets.x, 5 / scale)
-      : { delta: 0 };
-    const sy = snap
-      ? snapAxis([y, y + box.h / 2, y + box.h], targets.y, 5 / scale)
-      : { delta: 0 };
-    gx = sx.guide;
-    gy = sy.guide;
-    for (const { entry, from } of sources) {
-      const delta = localDelta(entry.transform, dx + sx.delta, dy + sy.delta),
-        o = entry.object;
-      o.x = from.x + delta.x;
-      o.y = from.y + delta.y;
-      const node = $('.artboard [data-id="' + o.id + '"]');
-      if (node)
-        Object.assign(node.style, { left: o.x + 'px', top: o.y + 'px' });
-    }
+    const move = snap
+      ? snapMovement(drag.moving, drag.stationary, box, targets, dx, dy, scale)
+      : { x: dx, y: dy };
+    gx = move.guideX;
+    gy = move.guideY;
+    moveObjects(sources, move.x, move.y);
   } else {
     const { entry, from } = sources[0],
       o = entry.object;
@@ -3069,7 +3116,10 @@ function endDrag(e, cancel) {
     if (cancel)
       for (const { entry, from } of d.sources)
         Object.assign(entry.object, from);
-    else record(d.before);
+    else if (
+      d.mode !== 'spacing' ||
+      d.sources.some(({ entry, from }) => entry.object.x !== from.x || entry.object.y !== from.y)
+    ) record(d.before);
     render();
   } else if (d.collapse && !cancel) select(d.collapse);
 }
@@ -3104,7 +3154,7 @@ $('.stage').addEventListener('dblclick', (e) => {
     });
     return;
   }
-  if (e.target.closest('[data-vertex],.callout-tip,[data-handle]')) return;
+  if (e.target.closest('[data-vertex],.callout-tip,[data-handle],[data-spacing-handle]')) return;
   if (n) {
     select(n.dataset.id);
     const o = selected();
@@ -3162,30 +3212,6 @@ document.addEventListener('keydown', (e) => {
     }
     return;
   }
-  if (present) {
-    if (
-      [
-        'ArrowRight',
-        'ArrowDown',
-        ' ',
-        'PageDown',
-        'ArrowLeft',
-        'ArrowUp',
-        'PageUp',
-        'Escape',
-      ].includes(e.key)
-    ) {
-      e.preventDefault();
-      run(
-        e.key === 'Escape'
-          ? 'endPresent'
-          : ['ArrowRight', 'ArrowDown', ' ', 'PageDown'].includes(e.key)
-            ? 'next'
-            : 'prev'
-      );
-    }
-    return;
-  }
   if (vectorEdit && !editing) {
     if (e.key === 'Escape' || e.key === 'Enter') {
       e.preventDefault();
@@ -3214,6 +3240,11 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     endDrag({ pointerId: drag.id }, true);
     setTool('pointer');
+    return;
+  }
+  if (e.key === 'Escape' && drag?.mode === 'spacing') {
+    e.preventDefault();
+    endDrag({ pointerId: drag.id }, true);
     return;
   }
   if (e.key === 'Escape') {
@@ -3401,16 +3432,12 @@ window.addEventListener('beforeunload', (e) => {
     e.returnValue = '';
   }
 });
-document.addEventListener('fullscreenchange', () => {
-  if (!platform.native && present && !document.fullscreenElement) {
-    present = false;
-    $('.present')?.remove();
-  }
+window.addEventListener('pointermove', () => {
+  if (drag?.moved) presentation.publish();
 });
 $('.viewport').addEventListener('scroll', drawRulers);
 new ResizeObserver(() => {
   sizing();
-  if (present) drawPresentation();
 }).observe($('.stage'));
 render();
 const initialFonts = platform
