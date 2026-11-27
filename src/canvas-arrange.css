@@ -1,3 +1,8 @@
+.stage.resizing-object,
+.stage.resizing-object * {
+  cursor: var(--canvas-resize-cursor) !important;
+}
+
 .resize-edge {
   position: absolute;
   pointer-events: auto;

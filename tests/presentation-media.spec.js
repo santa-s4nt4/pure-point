@@ -20,15 +20,19 @@ test('Local video follows editor playback, seeks and audio without replacing the
   const editor = page.locator('.artboard .video-surface');
   await expect(editor).toBeVisible();
   const viewer = await openViewer(page);
+  const source = editor.locator('video');
   const projected = viewer.locator('.present-frame video');
   await editor.hover();
   await editor.getByRole('button', { name: 'Play video', exact: true }).click();
+  await expect.poll(() => source.evaluate((video) => [video.paused, video.muted])).toEqual([false, true]);
   await expect.poll(() => projected.evaluate((video) => video.currentTime)).toBeGreaterThan(0);
+  await expect.poll(() => projected.evaluate((video) => video.muted)).toBe(false);
   await editor.getByRole('button', { name: 'Pause video', exact: true }).click();
   await expect.poll(() => projected.evaluate((video) => video.paused)).toBe(true);
   await editor.getByRole('slider', { name: 'Seek video' }).fill('1.2');
   await expect.poll(() => projected.evaluate((video) => video.currentTime)).toBeCloseTo(1.2, 1);
   await editor.getByRole('slider', { name: 'Volume', exact: true }).fill('0.34');
+  await expect.poll(() => projected.evaluate((video) => [video.volume, video.muted])).toEqual([0.34, false]);
   await editor.getByRole('button', { name: 'Mute', exact: true }).click();
   await expect.poll(() => projected.evaluate((video) => [video.volume, video.muted])).toEqual([0.34, true]);
   await projected.evaluate((video) => { video.dataset.existing = 'yes'; });
@@ -39,6 +43,21 @@ test('Local video follows editor playback, seeks and audio without replacing the
   await expect(viewer.locator('.present-frame .item-text')).toHaveText('Editing while projected');
   await expect(projected).toHaveAttribute('data-existing', 'yes');
   await expect(editor.locator('video')).toHaveAttribute('data-existing', 'yes');
+  await viewer.close();
+  await expect.poll(() => source.evaluate((video) => video.muted)).toBe(true);
+  await editor.hover();
+  await editor.getByRole('button', { name: 'Unmute', exact: true }).click();
+  await expect.poll(() => source.evaluate((video) => [video.volume, video.muted])).toEqual([0.34, false]);
+
+  const reopened = await openViewer(page);
+  await expect.poll(() => source.evaluate((video) => video.muted)).toBe(true);
+  const closed = reopened.waitForEvent('close');
+  await reopened.locator('.video-volume').focus();
+  await reopened.keyboard.press('Escape').catch((error) => {
+    if (!error.message.includes('has been closed')) throw error;
+  });
+  await closed;
+  await expect.poll(() => source.evaluate((video) => [video.volume, video.muted])).toEqual([0.34, false]);
 });
 
 const youtubeStub = () => {
@@ -74,7 +93,7 @@ const vimeoStub = () => {
     time: 0,
     playing: new URLSearchParams(location.search).get('autoplay') === '1',
     volume: 1,
-    muted: false,
+    muted: new URLSearchParams(location.search).get('muted') === '1',
     rate: 1,
   };
   const playing = (value) => {
@@ -87,7 +106,7 @@ const vimeoStub = () => {
   };
   const sound = (volume, muted) => {
     Object.assign(state, { volume, muted });
-    announce('volumechange', { volume });
+    announce('volumechange', { volume, muted });
   };
   const methods = {
     ping() {},
@@ -116,6 +135,7 @@ const vimeoStub = () => {
     seekTo: seek,
     setVolume: methods.setVolume,
     mute: () => sound(state.volume, true),
+    unMute: () => sound(state.volume, false),
   };
   window.testState = state;
   announce('ready');
@@ -140,23 +160,40 @@ for (const provider of ['YouTube', 'Vimeo']) {
     await page.locator('[data-action="tool-embed"]').click();
     await page.getByLabel('Video URL').fill(youtube ? 'https://youtu.be/M7lc1UVf-VE' : 'https://vimeo.com/76979871');
     await page.getByRole('button', { name: 'Embed', exact: true }).click();
-    const viewer = await openViewer(page);
     const editor = page.locator('.artboard .video-surface');
     await editor.hover();
     await editor.getByRole('button', { name: 'Play ' + provider + ' video' }).click();
     const source = await editor.locator('iframe').elementHandle();
     const sourceFrame = await source.contentFrame();
+    await expect.poll(() => sourceFrame.evaluate(() => window.testState)).toMatchObject({ playing: true, muted: false });
+    const viewer = await openViewer(page);
     const target = await viewer.locator('.present-frame iframe').elementHandle();
     const targetFrame = await target.contentFrame();
-    await expect.poll(() => targetFrame.evaluate(() => window.testState?.playing)).toBe(true);
+    const sourceState = () => sourceFrame.evaluate(() => window.testState);
+    const targetState = () => targetFrame.evaluate(() => window.testState);
+    await expect.poll(sourceState).toMatchObject({ playing: true, muted: true });
+    await expect.poll(targetState).toMatchObject({ playing: true, muted: false });
     await sourceFrame.evaluate((volume) => {
+      window.testPlayer.unMute();
+      window.testPlayer.setVolume(volume);
+    }, youtube ? 40 : 0.4);
+    await expect.poll(sourceState).toMatchObject({ muted: true, volume: youtube ? 40 : 0.4 });
+    await expect.poll(targetState).toMatchObject({ muted: false, volume: youtube ? 40 : 0.4 });
+    await editor.getByRole('slider', { name: 'Volume', exact: true }).fill('0.3');
+    await editor.getByRole('button', { name: 'Mute', exact: true }).click();
+    await expect.poll(targetState).toMatchObject({ muted: true, volume: youtube ? 30 : 0.3 });
+    await editor.getByRole('button', { name: 'Unmute', exact: true }).click();
+    await expect.poll(sourceState).toMatchObject({ muted: true, volume: youtube ? 30 : 0.3 });
+    await expect.poll(targetState).toMatchObject({ muted: false, volume: youtube ? 30 : 0.3 });
+    await sourceFrame.evaluate(() => {
       window.testPlayer.pauseVideo();
       window.testPlayer.seekTo(14);
-      window.testPlayer.setVolume(volume);
-      window.testPlayer.mute();
-    }, youtube ? 40 : 0.4);
-    await expect.poll(() => targetFrame.evaluate(() => window.testState)).toMatchObject({
-      playing: false, time: 14, muted: true, volume: youtube ? 40 : 0.4,
     });
+    await expect.poll(targetState).toMatchObject({ playing: false, time: 14 });
+    await sourceFrame.evaluate(() => window.testPlayer.playVideo());
+    await expect.poll(targetState).toMatchObject({ playing: true, muted: false });
+    await viewer.close();
+    await expect.poll(sourceState).toMatchObject({ playing: true, time: 14, muted: false, volume: youtube ? 30 : 0.3 });
+    await expect(editor.getByRole('slider', { name: 'Volume', exact: true })).toBeHidden();
   });
 }

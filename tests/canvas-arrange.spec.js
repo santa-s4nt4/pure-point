@@ -177,6 +177,96 @@ test('A grouped image is selected by the first double-click and cropped by the n
   await expect(crop).toBeVisible();
 });
 
+test('A marquee selects partially overlapping objects, retaining locked and hidden exclusions', async ({ page }) => {
+  page = await openShapes(page, [
+    ['Left', 110, 110, 110, 95, { fill: '#008166' }],
+    ['Right', 270, 155, 130, 65, { fill: '#354AE8' }],
+    ['Locked', 230, 100, 30, 25, { fill: '#B6305C', locked: true }],
+    ['Hidden', 235, 200, 30, 25, { fill: '#B6305C', hidden: true }],
+    ['Outside', 450, 220, 110, 70, { fill: '#354AE8' }],
+  ]);
+  const art = page.locator('.artboard');
+  const board = await art.boundingBox();
+  const scale = board.width / 960;
+  const from = { x: board.x + 170 * scale, y: board.y + 70 * scale };
+  const to = { x: board.x + 325 * scale, y: board.y + 250 * scale };
+  const outline = art.locator('.selection-outline');
+  const drag = async (start, end) => {
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 4 });
+    await page.mouse.up();
+  };
+  await drag(from, to);
+  await expect(outline).toHaveCount(2);
+  expect(await outline.evaluateAll((nodes) => nodes.map((node) => parseFloat(node.style.width))))
+    .toEqual([110, 130]);
+  const outside = art.locator('.scene > [data-id]').last();
+  await outside.click();
+  await page.keyboard.down('Shift');
+  await drag(to, from);
+  await page.keyboard.up('Shift');
+  await expect(outline).toHaveCount(3);
+});
+
+test('Every image and video handle preserves aspect and shows the resize direction', async ({ page }) => {
+  const poster = 'ppt/media/poster.png';
+  const movie = 'ppt/media/movie.mp4';
+  const [png, mp4] = await Promise.all([
+    readFile(new URL('./fixtures/image.png', import.meta.url)),
+    readFile(new URL('./fixtures/two-seconds.mp4', import.meta.url)),
+  ]);
+  page = await openShapes(page, [
+    ['Image', 220, 160, 180, 100, { kind: 'image', asset: poster }],
+    ['Movie', 530, 160, 180, 100, { kind: 'video', asset: movie, poster }],
+  ], {
+    [poster]: 'data:image/png;base64,' + png.toString('base64'),
+    [movie]: 'data:video/mp4;base64,' + mp4.toString('base64'),
+  });
+  const art = page.locator('.artboard');
+  const stage = page.locator('.stage');
+  for (const object of await art.locator('.scene > [data-id]').all()) {
+    await object.click({ position: { x: 20, y: 20 } });
+    const before = await object.boundingBox();
+    for (const [edge, cursor] of [
+      ['n', 'ns-resize'], ['s', 'ns-resize'], ['w', 'ew-resize'], ['e', 'ew-resize'],
+      ['nw', 'nwse-resize'], ['se', 'nwse-resize'],
+      ['ne', 'nesw-resize'], ['sw', 'nesw-resize'],
+    ]) {
+      const handle = art.locator(`[data-handle="${edge}"]`);
+      const bounds = await handle.boundingBox();
+      const x = bounds.x + bounds.width / 2;
+      const y = bounds.y + bounds.height / 2;
+      const actualCursor = await page.evaluate(({ x, y }) =>
+        getComputedStyle(document.elementFromPoint(x, y)).cursor, { x, y }
+      );
+      expect(actualCursor).toBe(cursor);
+      await page.keyboard.down('Alt');
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      const dx = edge.includes('w') ? -26 : 26;
+      const dy = edge.includes('n') ? -19 : 19;
+      await page.mouse.move(x + dx, y + dy, { steps: 3 });
+      await expect(stage).toHaveCSS('cursor', cursor);
+      const after = await object.boundingBox();
+      expect(after.width).toBeGreaterThan(before.width + 10);
+      expect(after.width / after.height).toBeCloseTo(before.width / before.height, 2);
+      if (edge.includes('n'))
+        expect(after.y + after.height).toBeCloseTo(before.y + before.height, 0);
+      else if (edge.includes('s')) expect(after.y).toBeCloseTo(before.y, 0);
+      else expect(after.y + after.height / 2).toBeCloseTo(before.y + before.height / 2, 0);
+      if (edge.includes('w'))
+        expect(after.x + after.width).toBeCloseTo(before.x + before.width, 0);
+      else if (edge.includes('e')) expect(after.x).toBeCloseTo(before.x, 0);
+      else expect(after.x + after.width / 2).toBeCloseTo(before.x + before.width / 2, 0);
+      await page.mouse.up();
+      await page.keyboard.up('Alt');
+      await expect(stage).not.toHaveClass(/resizing-object/);
+      await page.keyboard.press('ControlOrMeta+z');
+    }
+  }
+});
+
 test('Smart movement guides connect matching edges and centers on rotated objects', async ({ page }) => {
   page = await openShapes(page, [
     ['Move', 120, 120, 76, 48, { fill: '#008166' }],

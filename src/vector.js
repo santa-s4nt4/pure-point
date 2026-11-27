@@ -397,16 +397,17 @@ export function resizeDimensions(o, from, deltaW, deltaH, shift, axis) {
   const min = o.kind === 'line' || o.kind === 'path' ? 0 : 1;
   let w = axis === 'y' ? from.w : Math.max(min, from.w + deltaW),
     h = axis === 'x' ? from.h : Math.max(min, from.h + deltaH);
-  const keepProportions = shift || (o.kind !== 'text' && !vectorKinds.has(o.kind));
-  if (!axis && keepProportions && from.w > 0 && from.h > 0) {
-    // Project the pointer motion onto the original diagonal. Both horizontal
-    // and vertical drags resize a tall or wide picture around the fixed corner.
-    const ratio = Math.max(
-      1 / Math.min(from.w, from.h),
-      1 +
-        (deltaW * from.w + deltaH * from.h) /
-          (from.w * from.w + from.h * from.h)
-    );
+  const media = o.kind === 'image' || o.kind === 'video';
+  const proportionalCorner = !axis &&
+    (shift || (o.kind !== 'text' && !vectorKinds.has(o.kind)));
+  if ((media || proportionalCorner) && from.w > 0 && from.h > 0) {
+    // Edges follow the pointer on their own axis. Corners project the
+    // pointer motion onto the original diagonal.
+    const change =
+      axis === 'x' ? deltaW / from.w :
+      axis === 'y' ? deltaH / from.h :
+      (deltaW * from.w + deltaH * from.h) / (from.w ** 2 + from.h ** 2);
+    const ratio = Math.max(1 / Math.min(from.w, from.h), 1 + change);
     w = from.w * ratio;
     h = from.h * ratio;
   }

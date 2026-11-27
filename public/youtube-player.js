@@ -23,6 +23,13 @@
   document.body.append(frame);
   let player, timer;
 
+  function setAudio({ volume, muted }) {
+    if (muted === true && !player.isMuted()) player.mute();
+    if (Number.isFinite(volume) && player.getVolume() !== Math.round(volume * 100))
+      player.setVolume(Math.round(volume * 100));
+    if (muted === false && player.isMuted()) player.unMute();
+  }
+
   function report() {
     if (!player) return;
     const status = player.getPlayerState();
@@ -50,19 +57,18 @@
     });
   };
   addEventListener('message', (event) => {
-    const { type, observe, playback, seek } = event.data || {};
+    const { type, observe, playback, seek, audio } = event.data || {};
     if (event.source !== parent || type !== 'pure-point-youtube-control' || !player)
       return;
     if (observe && !timer) timer = setInterval(report, 125);
-    if (!playback) return;
-    const { time, playing, buffering, volume, muted, rate, at } = playback;
+    if (!playback) {
+      if (audio) setAudio(audio);
+      return;
+    }
+    const { time, playing, buffering, volume, rate, at } = playback;
     if (![time, volume, rate, at].every(Number.isFinite)) return;
     const seconds = time + (playing && !buffering ? Math.max(0, Date.now() - at) / 1000 * rate : 0);
-    if (player.getVolume() !== Math.round(volume * 100)) player.setVolume(Math.round(volume * 100));
-    if (player.isMuted() !== muted) {
-      if (muted) player.mute();
-      else player.unMute();
-    }
+    setAudio({ ...playback, ...audio });
     if (rate !== player.getPlaybackRate()) player.setPlaybackRate(rate);
     if (seek || Math.abs(seconds - player.getCurrentTime()) > 0.45) player.seekTo(seconds, true);
     const status = player.getPlayerState();

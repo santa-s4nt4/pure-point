@@ -1,7 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { createElement, Play, Pause, Volume2, VolumeX, X } from 'lucide';
 import { mediaURL, onlineVideo, setImageSource } from './media-format.js';
-import { currentTime, trackPlayback } from './playback.js';
+import { currentTime, isEditorAudioSilenced, trackPlayback } from './playback.js';
 import { connectYouTube, connectVimeo } from './online-playback.js';
 import './media.css';
 
@@ -54,19 +54,74 @@ const initialPlayback = {
   rate: 1,
 };
 
+function audioControls(change) {
+  let state = { volume: 1, muted: false };
+  const volume = slider('Volume', 0.01, 1);
+  const mute = control('Mute', Volume2);
+  volume.className = 'video-volume';
+  volume.value = '1';
+  function update({ volume: level, muted }) {
+    if (state.volume === level && state.muted === muted) return;
+    state = { volume: level, muted };
+    const silent = muted || !level;
+    mute.replaceChildren(glyph(silent ? VolumeX : Volume2));
+    mute.setAttribute('aria-label', silent ? 'Unmute' : 'Mute');
+    mute.title = silent ? 'Unmute' : 'Mute';
+    volume.value = String(muted ? 0 : level);
+  }
+  function select(next) {
+    update(next);
+    change(state);
+  }
+  mute.onclick = () => select({ ...state, muted: !state.muted });
+  volume.oninput = () => select({ volume: Number(volume.value), muted: false });
+  return { volume, mute, state: () => state, update };
+}
+
 function onlineControls(host, online, controls, play, report, clear, observe) {
   const provider = element('span', 'video-time');
   provider.textContent = online.provider;
   controls.append(play, provider);
   host.append(controls);
-  let player, frame, close, desired, opening;
+  let player, frame, close, desired, opening, lastState, audioTarget;
+  let silenced = observe && isEditorAudioSilenced();
   let generation = 0;
+  const audio = audioControls((sound) => {
+    updateOutput();
+    if (lastState) publish({ ...lastState, ...sound });
+  });
+  const audioBar = element('div', 'media-controls online-audio-controls');
+  audioBar.dataset.mediaControl = '';
+  audioBar.append(audio.mute, audio.volume);
+  audioBar.hidden = true;
+  for (const event of ['pointerdown', 'click', 'dblclick', 'keydown', 'keyup'])
+    audioBar.addEventListener(event, (event) => event.stopPropagation());
+  host.append(audioBar);
+
+  function showAudioControls() {
+    const show = silenced && Boolean(frame);
+    host.classList.toggle('audio-routed', show);
+    audioBar.hidden = !show;
+  }
+  function updateOutput() {
+    if (!player) return;
+    const { volume, muted } = audio.state();
+    audioTarget = { volume, muted: silenced || muted, expires: performance.now() + 1000 };
+    player.setAudio(audioTarget);
+  }
+  function silenceOutput(value) {
+    silenced = value;
+    showAudioControls();
+    updateOutput();
+  }
   function detach() {
     generation++;
     player?.close();
     frame?.remove();
     close?.remove();
     player = frame = close = opening = desired = null;
+    lastState = audioTarget = null;
+    showAudioControls();
     controls.hidden = false;
     play.disabled = false;
   }
@@ -80,18 +135,33 @@ function onlineControls(host, online, controls, play, report, clear, observe) {
     desired = { state, seek: seek || desired?.seek };
     if (player) apply();
     else mount();
-  }, detach);
+  }, detach, observe ? silenceOutput : undefined);
 
   function apply() {
     if (!desired) return;
-    player.apply(desired.state, desired.seek);
+    const { state, seek } = desired;
     desired = null;
+    audio.update(state);
+    const output = { ...state, muted: silenced || state.muted };
+    if (observe) audioTarget = { ...output, expires: performance.now() + 1000 };
+    player.apply(output, seek);
   }
 
   function read(state, options) {
     if (![state.time, state.rate, state.volume].every(Number.isFinite)) return;
     if (state.playing) clear();
-    if (observe) publish({ ...state, opened: true }, options);
+    if (!observe) return;
+    // Provider reports include the physical mute we just set. Keep the user's
+    // mute setting in the playback state sent to the other window.
+    if (audioTarget && (performance.now() >= audioTarget.expires ||
+        (audioTarget.volume === state.volume && audioTarget.muted === state.muted)))
+      audioTarget = null;
+    if (!audioTarget) {
+      audio.update({ volume: state.volume, muted: silenced ? audio.state().muted : state.muted });
+      if (silenced && !state.muted) player?.setAudio({ muted: true });
+    }
+    lastState = { ...state, ...audio.state(), opened: true };
+    publish(lastState, options);
   }
 
   function trouble(reason) {
@@ -122,6 +192,7 @@ function onlineControls(host, online, controls, play, report, clear, observe) {
         // other window when the second copy of this video starts.
         url.searchParams.set('autopause', '0');
         url.searchParams.set('autoplay', desired?.state.playing ? '1' : '0');
+        if (silenced || desired?.state.muted) url.searchParams.set('muted', '1');
         src = url.href;
       }
       if (!host.isConnected || generation !== ticket) return;
@@ -144,6 +215,7 @@ function onlineControls(host, online, controls, play, report, clear, observe) {
       close.onpointerdown = (event) => event.stopPropagation();
       host.append(frame, close);
       controls.hidden = true;
+      showAudioControls();
       const connected = youtube
         ? connectYouTube(frame, observe, read, trouble)
         : await connectVimeo(frame, observe, read, trouble);
@@ -213,14 +285,23 @@ export function videoNode(o, assets, interactive = false, deferImages = false) {
   video.preload = 'none';
   if (o.poster) video.poster = mediaURL(assets[o.poster]);
   const seek = slider('Seek video', 0.01, 1),
-    volume = slider('Volume', 0.01, 1),
-    mute = control('Mute', Volume2);
+    audio = audioControls(() => {
+      interacted = true;
+      updateOutput();
+      state();
+    });
   seek.className = 'video-seek';
-  volume.className = 'video-volume';
-  volume.value = '1';
   const stamp = element('span', 'video-time');
   stamp.textContent = '0:00';
   let ready = false, pending, starting, autoplayBlocked = false, interacted = false;
+  let silenced = observe && isEditorAudioSilenced();
+  video.muted = silenced;
+
+  function updateOutput() {
+    const { volume, muted } = audio.state();
+    video.volume = volume;
+    video.muted = silenced || muted;
+  }
 
   function load() {
     if (!ready) {
@@ -240,7 +321,10 @@ export function videoNode(o, assets, interactive = false, deferImages = false) {
       video.removeAttribute('src');
       video.load();
     }
-  });
+  }, observe ? (value) => {
+    silenced = value;
+    updateOutput();
+  } : undefined);
 
   function state(options) {
     if (observe && interacted)
@@ -248,8 +332,7 @@ export function videoNode(o, assets, interactive = false, deferImages = false) {
         opened: true,
         time: video.currentTime,
         playing: !video.paused && !video.ended,
-        volume: video.volume,
-        muted: video.muted,
+        ...audio.state(),
         rate: video.playbackRate,
       }, options);
   }
@@ -268,8 +351,8 @@ export function videoNode(o, assets, interactive = false, deferImages = false) {
   function apply() {
     if (!pending) return;
     const { state: next, move } = pending;
-    video.volume = next.volume;
-    video.muted = next.muted;
+    audio.update(next);
+    updateOutput();
     video.playbackRate = next.rate;
     if (video.readyState >= 1) {
       const target = Math.min(currentTime(next), video.duration);
@@ -278,7 +361,7 @@ export function videoNode(o, assets, interactive = false, deferImages = false) {
       pending = null;
     }
     if (next.playing) {
-      if (video.paused && (!autoplayBlocked || next.muted)) start();
+      if (video.paused && (!autoplayBlocked || video.muted)) start();
     } else if (!video.paused) video.pause();
   }
 
@@ -330,23 +413,12 @@ export function videoNode(o, assets, interactive = false, deferImages = false) {
     load();
     if (Number.isFinite(video.duration)) video.currentTime = Number(seek.value);
   };
-  mute.onclick = () => {
-    interacted = true;
-    video.muted = !video.muted;
-  };
-  volume.oninput = () => {
-    interacted = true;
-    video.volume = Number(volume.value);
-    video.muted = false;
-  };
   video.onvolumechange = () => {
-    const silent = video.muted || !video.volume;
-    mute.replaceChildren(glyph(silent ? VolumeX : Volume2));
-    mute.setAttribute('aria-label', silent ? 'Unmute' : 'Mute');
-    volume.value = String(video.muted ? 0 : video.volume);
+    audio.update({ volume: video.volume, muted: silenced ? audio.state().muted : video.muted });
+    if (silenced && !video.muted) video.muted = true;
     state();
   };
-  controls.append(play, seek, stamp, mute, volume);
+  controls.append(play, seek, stamp, audio.mute, audio.volume);
   host.append(video, controls);
   return host;
 }

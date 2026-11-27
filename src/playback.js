@@ -1,4 +1,16 @@
 const players = new WeakMap();
+let editorSilenced = false;
+
+export function isEditorAudioSilenced() {
+  return editorSilenced;
+}
+
+export function silenceEditorAudio(silenced) {
+  if (silenced === editorSilenced) return;
+  editorSilenced = silenced;
+  for (const host of document.querySelectorAll('.video-surface'))
+    players.get(host)?.silenceAudio?.(silenced);
+}
 
 export function currentTime(state) {
   const advances = state.playing && !state.buffering;
@@ -6,7 +18,7 @@ export function currentTime(state) {
   return state.time + (advances ? elapsed * state.rate : 0);
 }
 
-export function trackPlayback(host, source, apply, dispose = () => {}) {
+export function trackPlayback(host, source, apply, dispose, silenceAudio) {
   let state, received;
   let seek = 0;
   const session = {
@@ -21,6 +33,7 @@ export function trackPlayback(host, source, apply, dispose = () => {}) {
       apply(next, moved);
     },
     dispose,
+    silenceAudio,
   };
   players.set(host, session);
   return (next, options = {}) => {

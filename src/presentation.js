@@ -6,7 +6,7 @@ import { native, fullScreen, getFonts } from './platform.js';
 import { loadSlideFonts } from './slide-fonts.js';
 import { el, icon, itemNode, scene } from './view.js';
 import { pageNumberItem } from './page-numbers.js';
-import { applyPlayback, disposePlayback, replaceLiveItem, replaceLiveScene } from './playback.js';
+import { applyPlayback, disposePlayback, replaceLiveItem, replaceLiveScene, silenceEditorAudio } from './playback.js';
 import './style.css';
 import './vector.css';
 
@@ -19,22 +19,33 @@ const navigate = 'presentation-navigate';
 export function presentationControl(snapshot, move) {
   const owner = native ? getCurrentWindow() : null;
   const label = owner && prefix + owner.label;
-  let popup, listening;
+  let popup, listening, closeCheck;
   let connected = false, scheduled = false, sending = false, pending = false;
   let lastFrame = '', lastPlayback = '', lastAssets = new Map();
 
   function handshake() {
     connected = true;
+    silenceEditorAudio(true);
+    if (!owner) closeCheck ??= setInterval(() => {
+      if (popup?.closed) disconnect();
+    }, 250);
     lastFrame = lastPlayback = '';
     lastAssets.clear();
     publish();
+  }
+
+  function disconnect() {
+    connected = false;
+    clearInterval(closeCheck);
+    closeCheck = undefined;
+    silenceEditorAudio(false);
   }
 
   if (!native) {
     window.addEventListener('message', (event) => {
       if (!popup || event.source !== popup || event.origin !== location.origin) return;
       if (event.data?.type === ready) handshake();
-      if (event.data?.type === closed) connected = false;
+      if (event.data?.type === closed) disconnect();
       if (event.data?.type === navigate) move(event.data.payload);
     });
     window.addEventListener('pagehide', () => popup?.close());
@@ -46,7 +57,7 @@ export function presentationControl(snapshot, move) {
     if (owner) {
       listening ??= Promise.all([
         owner.listen(ready, handshake),
-        owner.listen(closed, () => { connected = false; }),
+        owner.listen(closed, disconnect),
         owner.listen(navigate, ({ payload }) => move(payload)),
       ]);
       await listening;
@@ -57,7 +68,7 @@ export function presentationControl(snapshot, move) {
       popup.focus();
       return;
     }
-    connected = false;
+    disconnect();
     const url = new URL(location.href);
     url.hash = 'presentation';
     popup = window.open(url, '_blank', 'popup,width=960,height=600');
@@ -73,7 +84,11 @@ export function presentationControl(snapshot, move) {
     queueMicrotask(async () => {
       scheduled = false;
       pending = false;
-      if (!connected || (!owner && popup?.closed)) return;
+      if (!connected) return;
+      if (!owner && popup?.closed) {
+        disconnect();
+        return;
+      }
       const { assets, playback, ...frame } = snapshot();
       const signature = JSON.stringify(frame);
       const current = new Map();
@@ -158,11 +173,12 @@ export async function startPresentation() {
     updateFullscreen();
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      close();
-      return;
-    }
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    close();
+  }, true);
+  document.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key.toLowerCase() === 'f' || event.key === 'F11') {
       event.preventDefault();

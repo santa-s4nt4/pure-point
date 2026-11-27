@@ -29,6 +29,14 @@ const app = spawn(process.argv[2], [file], {
 });
 const stopped = new Promise(resolve => app.once('exit', resolve));
 let browser;
+async function closeViewer(viewer) {
+  const closed = viewer.waitForEvent('close');
+  await viewer.keyboard.press('Escape').catch((error) => {
+    if (!error.message.includes('has been closed')) throw error;
+  });
+  await closed;
+}
+
 try {
   await expect.poll(async () => {
     if (app.exitCode !== null) throw Error('Installed app exited during startup');
@@ -99,27 +107,38 @@ try {
   await expect(movie).toBeVisible({ timeout: 30000 });
   await movie.hover();
   await movie.getByRole('button', { name: 'Play video' }).click();
-  await expect.poll(() => projectedMovie.evaluate((node) => node.paused)).toBe(false);
-  await movie.locator('video').evaluate((node) => {
+  const editorMovie = movie.locator('video');
+  await expect.poll(() => editorMovie.evaluate((node) => node.muted)).toBe(true);
+  await expect.poll(() => projectedMovie.evaluate((node) => [node.paused, node.muted]))
+    .toEqual([false, false]);
+  await editorMovie.evaluate((node) => {
     node.pause();
     node.currentTime = 0.85;
-    node.volume = 0.45;
   });
+  await movie.getByRole('slider', { name: 'Volume', exact: true }).fill('0.45');
   await expect.poll(() => projectedMovie.evaluate((node) => [
     node.paused, Math.round(node.currentTime * 100), node.volume,
   ])).toEqual([true, 85, 0.45]);
-  await page.getByRole('button', { name: 'Add slide', exact: true }).click();
-  await page.getByRole('button', { name: 'title', exact: true }).click();
-  await expect(projected.locator('.slide-page-number')).toHaveText('2');
-  await expect(projectedMovie).toHaveCount(0);
   await viewer.bringToFront();
   await viewer.getByRole('button', { name: 'Enter fullscreen (F)', exact: true }).click();
   await expect(viewer.getByRole('button', { name: 'Exit fullscreen (F)', exact: true })).toBeVisible();
-  const closed = viewer.waitForEvent('close');
-  await viewer.keyboard.press('Escape').catch((error) => {
-    if (!error.message.includes('has been closed')) throw error;
-  });
-  await closed;
+  await closeViewer(viewer);
+  await expect.poll(() => editorMovie.evaluate((node) => [node.muted, node.volume]))
+    .toEqual([false, 0.45]);
+  await page.bringToFront();
+  const reopened = context.waitForEvent('page');
+  await page.getByRole('button', { name: 'Open presentation window' }).click();
+  const nextViewer = await reopened;
+  const nextScene = nextViewer.locator('.present-frame .scene');
+  await expect(nextScene.locator('video')).toBeAttached();
+  await expect.poll(() => editorMovie.evaluate((node) => node.muted)).toBe(true);
+  await page.bringToFront();
+  await page.getByRole('button', { name: 'Add slide', exact: true }).click();
+  await page.getByRole('button', { name: 'title', exact: true }).click();
+  await expect(nextScene.locator('.slide-page-number')).toHaveText('2');
+  await expect(nextScene.locator('video')).toHaveCount(0);
+  await nextViewer.bringToFront();
+  await closeViewer(nextViewer);
   await page.bringToFront();
   await page.keyboard.press('Control+n');
   await expect.poll(() => context.pages().length).toBe(2);

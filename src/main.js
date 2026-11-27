@@ -693,7 +693,14 @@ function resizeCursor(handle, transform) {
     y: handle.includes('n') ? -1 : Number(handle.includes('s')),
     w: 0,
   });
-  const octant = Math.round((4 * Math.atan2(vector.y, vector.x)) / Math.PI);
+  const angle = Math.atan2(vector.y, vector.x);
+  if (handle.length === 2) {
+    // A corner keeps a diagonal cursor even when the shape's transform
+    // makes its diagonal shallow or steep.
+    const quadrant = Math.floor((2 * angle) / Math.PI);
+    return quadrant % 2 ? 'nesw-resize' : 'nwse-resize';
+  }
+  const octant = Math.round((4 * angle) / Math.PI);
   return ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'][
     (octant + 4) % 4
   ];
@@ -2875,6 +2882,11 @@ $('.stage').addEventListener('pointerdown', (e) => {
     collapse: !added && entries.length > 1 ? hit?.object.id : null,
     moved: false,
   };
+  if (handle) {
+    const stage = $('.stage');
+    stage.style.setProperty('--canvas-resize-cursor', handle.style.cursor);
+    stage.classList.add('resizing-object');
+  }
 });
 function guides(x, y) {
   const sc = $('.artboard>.scene');
@@ -3032,20 +3044,21 @@ window.addEventListener('pointermove', (e) => {
       w: Math.abs(dx),
       h: Math.abs(dy),
     };
-    const all = layerEntries(active().items);
-    const hits = active()
-      .items.filter((o) => {
-        const entry = all.get(o.id);
-        if (entry.hidden || entry.locked) return false;
+    const hits = [];
+    if (box.w > 0 && box.h > 0) {
+      const all = layerEntries(active().items);
+      for (const item of active().items) {
+        const entry = all.get(item.id);
+        if (entry.hidden || entry.locked) continue;
         const b = layerBounds(entry);
-        return (
-          b.x >= box.x &&
-          b.y >= box.y &&
-          b.x + b.w <= box.x + box.w &&
-          b.y + b.h <= box.y + box.h
-        );
-      })
-      .map((o) => o.id);
+        if (
+          b.x < box.x + box.w &&
+          b.y < box.y + box.h &&
+          b.x + b.w > box.x &&
+          b.y + b.h > box.y
+        ) hits.push(item.id);
+      }
+    }
     setSelection(drag.added ? [...drag.prior, ...hits] : hits);
     drawSelection();
     const sc = $('.artboard>.scene');
@@ -3104,8 +3117,10 @@ window.addEventListener('pointermove', (e) => {
       resizeDimensions(o, from, west ? -lx : lx, north ? -ly : ly, e.shiftKey, axis)
     );
     if (o.kind === 'text') o.autoWidth = false;
-    const mx = ((o.w - from.w) * (west ? -1 : 1)) / 2,
-      my = ((o.h - from.h) * (north ? -1 : 1)) / 2;
+    // A proportional edge resize expands on both sides of the perpendicular
+    // axis, keeping the midpoint of the opposite edge stationary.
+    const mx = axis === 'y' ? 0 : ((o.w - from.w) * (west ? -1 : 1)) / 2,
+      my = axis === 'x' ? 0 : ((o.h - from.h) * (north ? -1 : 1)) / 2;
     o.x = from.x + from.w / 2 + mx * c - my * s - o.w / 2;
     o.y = from.y + from.h / 2 + mx * s + my * c - o.h / 2;
     replaceLiveItem($('.artboard [data-id="' + o.id + '"]'), itemNode(o, assets, true));
@@ -3118,6 +3133,10 @@ function endDrag(e, cancel) {
   const d = drag;
   drag = null;
   const stage = $('.stage');
+  if (d.handle) {
+    stage.style.removeProperty('--canvas-resize-cursor');
+    stage.classList.remove('resizing-object');
+  }
   if (stage.hasPointerCapture(e.pointerId))
     stage.releasePointerCapture(e.pointerId);
   if (d.mode === 'draw-vector') {
@@ -3302,7 +3321,7 @@ document.addEventListener('keydown', (e) => {
     setTool('pointer');
     return;
   }
-  if (e.key === 'Escape' && drag?.mode === 'spacing') {
+  if (e.key === 'Escape' && (drag?.mode === 'spacing' || drag?.handle)) {
     e.preventDefault();
     endDrag({ pointerId: drag.id }, true);
     return;
