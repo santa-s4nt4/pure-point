@@ -48,7 +48,7 @@ jobs:
           test "$GITHUB_REF_NAME" = "v$version"
       - name: Test the editor and native document handling
         run: |
-          npm test
+          npm test -- --reporter=github,line
           cargo test --locked --release --manifest-path src-tauri/Cargo.toml
       - name: Build and archive the universal app
         run: bash scripts/package-macos.sh

@@ -1,18 +1,16 @@
 import { expect, test } from '@playwright/test';
 import { zipSync, strToU8 } from 'fflate';
-import { openFileWindow } from './document-window.js';
+import { chooseDocument, openFileWindow } from './document-window.js';
 
 test('Opening a PPTX reuses an untouched editor after canceling and rejecting a bad file', async ({ page, context }) => {
   await page.goto('/');
   await expect(page.locator('#status')).toHaveText('Not saved yet');
-  const cancel = page.waitForEvent('filechooser');
-  await page.keyboard.press('ControlOrMeta+o');
-  await (await cancel).element().dispatchEvent('cancel');
+  const { picker: cancel } = await chooseDocument(page);
+  await cancel.element().dispatchEvent('cancel');
   await expect(page.locator('#status')).toHaveText('Not saved yet');
 
-  const choose = page.waitForEvent('filechooser');
-  await page.keyboard.press('ControlOrMeta+o');
-  await (await choose).setFiles({
+  const { picker: choose } = await chooseDocument(page);
+  await choose.setFiles({
     name: 'broken.pptx',
     mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     buffer: Buffer.from('invalid archive'),

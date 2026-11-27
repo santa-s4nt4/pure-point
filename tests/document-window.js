@@ -1,10 +1,6 @@
 import { expect } from '@playwright/test';
 
-export async function openFileWindow(
-  page,
-  file,
-  open = () => page.keyboard.press('ControlOrMeta+o')
-) {
+export async function chooseDocument(page, open = () => page.keyboard.press('ControlOrMeta+o')) {
   const status = page.locator('#status');
   const [picker, reuse] = await Promise.all([
     page.waitForEvent('filechooser'),
@@ -16,6 +12,12 @@ export async function openFileWindow(
       return reuse;
     }),
   ]);
+  return { picker, reuse };
+}
+
+export async function openFileWindow(page, file, open) {
+  const status = page.locator('#status');
+  const { picker, reuse } = await chooseDocument(page, open);
   if (reuse) {
     await picker.setFiles(file);
     await expect(status).toHaveText('Saved');
