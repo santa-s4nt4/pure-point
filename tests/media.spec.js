@@ -431,9 +431,11 @@ test('DrawingML picture effects change the pixels while leaving the frame fill v
     );
   }, shot.toString('base64'));
   // Black at 10% over white, untouched white, Office washout, transparent over red.
-  for (const [i, expected] of [230, 255, 205].entries())
-    for (const channel of pixels[i])
-      expect(Math.abs(channel - expected)).toBeLessThanOrEqual(1);
+  // Windows and macOS compositors can differ by two 8-bit levels on filtered pixels.
+  for (const [index, expected] of [[0, 230], [2, 205]])
+    for (const channel of pixels[index])
+      expect(Math.abs(channel - expected)).toBeLessThanOrEqual(2);
+  expect(pixels[1]).toEqual([255, 255, 255]);
   expect(pixels[3]).toEqual([255, 0, 0]);
 });
 
