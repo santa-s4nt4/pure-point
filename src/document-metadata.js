@@ -192,7 +192,13 @@ function setText(n, modern, text) {
 }
 function writeReview(state, slide, previous, path) {
   const { xml, docs, part, types, ensureType, presPath } = state;
-  const old = previous?.comments || [],
+  // A connector converted to a freeform keeps its ID, but PowerPoint needs
+  // a shape marker in the comment anchor even when the text was untouched.
+  const old = (previous?.comments || []).map((c) =>
+      state.commentNodes.get(c.objectId)?.wasConnector
+        ? { ...c, objectId: null }
+        : c
+    ),
     next = slide.comments || [];
   if (equivalent(old, next)) return;
   const paths = commentParts(xml, path);
@@ -361,7 +367,7 @@ function writeReview(state, slide, previous, path) {
       if (modern && (!prior || prior.objectId !== c.objectId))
         writeCommentAnchor(
           node,
-          state.commentNodes.get(c.objectId),
+          state.commentNodes.get(c.objectId)?.node,
           state.slideId
         );
       if (

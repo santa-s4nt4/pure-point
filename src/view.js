@@ -216,6 +216,9 @@ export function itemNode(o, assets, interactive = false, deferImages = false) {
     top: o.y + 'px',
     width: (pathShape ? o.w || 1 : o.w) + 'px',
     height: (pathShape ? o.h || 1 : o.h) + 'px',
+    // A flat SVG needs a nonzero viewport, but its flip/rotation center is
+    // still the center of the original DrawingML frame.
+    transformOrigin: pathShape ? `${o.w / 2}px ${o.h / 2}px` : 'center',
     transform: `rotate(${o.rotation}deg) scale(${o.flipH ? -1 : 1},${o.flipV ? -1 : 1})`,
   });
   if (o.kind === 'video') {

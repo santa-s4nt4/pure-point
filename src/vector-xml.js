@@ -1,6 +1,6 @@
-import { attr, child, children, emu, esc, solid } from './xml.js';
+import { A, P, attr, child, children, emu, esc, solid } from './xml.js';
 import { calloutPresets, cornerPercent } from './shape-presets.js';
-import { curvedConnectorContour } from './connector-presets.js';
+import { connectorContour } from './connector-presets.js';
 import { paintPaths, curved, edges, vectorKinds } from './vector.js';
 
 const coordinate = (p, key) => {
@@ -86,15 +86,14 @@ const calloutByPreset = new Map(
 export function readPresetOptions(geometry) {
   const name = attr(geometry, 'prst');
   const shape = calloutByPreset.get(name);
-  const curvedConnector = /^curvedConnector[2-5]$/.test(name);
-  if (name !== 'roundRect' && !shape && !curvedConnector) return {};
+  const connector = /^(?:(?:curved|bent)Connector[2-5]|lineInv)$/.test(name);
+  if (name !== 'roundRect' && !shape && !connector) return {};
   const values = {};
   for (const gd of children(child(geometry, 'avLst'), 'gd')) {
     const match = /^val\s+([+-]?\d+)\s*$/.exec(attr(gd, 'fmla'));
     if (match) values[attr(gd, 'name')] = Number(match[1]);
   }
-  if (curvedConnector)
-    return { contours: [curvedConnectorContour(name, values)] };
+  if (connector) return { contours: [connectorContour(name, values)] };
   if (!shape) return { cornerRadius: (values.adj ?? 16667) / 1000 };
   return {
     calloutShape: shape,
@@ -164,6 +163,35 @@ export function strokeXML(o) {
 }
 export function connectorXML(o, id, xfrm) {
   return `<p:cxnSp><p:nvCxnSpPr><p:cNvPr id="${id}" name="${esc(o.name)}"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr>${xfrm}${geometryXML(o)}${strokeXML(o)}</p:spPr></p:cxnSp>`;
+}
+
+// PowerPoint discards a slide containing p:cxnSp with a:custGeom. Keep the
+// original path, transform, shape ID, stacking position and line decorations.
+export function customConnectors(doc) {
+  return [...doc.getElementsByTagNameNS(P, 'cxnSp')].filter((node) =>
+    child(child(node, 'spPr'), 'custGeom')
+  );
+}
+export function connectorToFreeform(node) {
+  const doc = node.ownerDocument;
+  function rename(element, tag) {
+    const next = doc.createElementNS(element.namespaceURI, tag);
+    for (const a of element.attributes)
+      next.setAttributeNS(a.namespaceURI, a.name, a.value);
+    while (element.firstChild) next.appendChild(element.firstChild);
+    element.replaceWith(next);
+    return next;
+  }
+  const nv = rename(child(node, 'nvCxnSpPr'), 'p:nvSpPr');
+  const properties = rename(child(nv, 'cNvCxnSpPr'), 'p:cNvSpPr');
+  const locks = child(properties, 'cxnSpLocks');
+  if (locks) rename(locks, 'a:spLocks');
+  child(properties, 'stCxn')?.remove();
+  child(properties, 'endCxn')?.remove();
+  const sp = child(node, 'spPr');
+  if (!children(sp).some((n) => n.localName.endsWith('Fill')))
+    child(sp, 'custGeom').after(doc.createElementNS(A, 'a:noFill'));
+  return rename(node, 'p:sp');
 }
 export function patchVector(node, o, old, fragment) {
   const sp = child(node, 'spPr');

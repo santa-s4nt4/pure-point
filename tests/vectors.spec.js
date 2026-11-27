@@ -165,9 +165,8 @@ test('Design edits the whole curve or a selected point and keeps the handles on 
   const xml = strFromU8(
     unzipSync(await readFile(pptx))['ppt/slides/slide1.xml']
   );
-  expect(xml).toMatch(
-    /<p:cxnSp>.*?<a:cubicBezTo>.*?<a:tailEnd type="stealth"/s
-  );
+  expect(xml).toMatch(/<p:sp>.*?<a:cubicBezTo>.*?<a:tailEnd type="stealth"/s);
+  expect(xml).not.toContain('<p:cxnSp>');
   const originalId = await art.locator('.is-line').getAttribute('data-id');
   page = await openFileWindow(page, pptx);
   const reopenedArt = page.locator('.artboard');
@@ -517,8 +516,8 @@ test('PowerPoint curved connector presets keep their adjustment guides on resize
       curves,
       presetNames,
       retainsGuide: resized.includes('val 120000'),
-      editedAsConnector: !!desc(
-        parse(edited).getElementsByTagNameNS('*', 'cxnSp')[3],
+      editedAsFreeform: !!desc(
+        parse(edited).getElementsByTagNameNS('*', 'sp')[0],
         'custGeom'
       ),
       reopened: again.kind,
@@ -561,7 +560,155 @@ test('PowerPoint curved connector presets keep their adjustment guides on resize
     [2, 3, 4, 5].map((n) => 'curvedConnector' + n)
   );
   expect(result.retainsGuide).toBe(true);
-  expect(result.editedAsConnector).toBe(true);
+  expect(result.editedAsFreeform).toBe(true);
   expect(result.reopened).toBe('line');
   expect(result.maxError).toBeLessThan(0.001);
+});
+
+test('Saving an untouched legacy custom connector repairs its shape without moving it', async ({
+  page,
+}) => {
+  await page.goto('/icon.png');
+  const result = await page.evaluate(async () => {
+    const { blankDeck, shape } = await import('/src/model.js');
+    const { exportDeck } = await import('/src/export.js');
+    const { importDeck } = await import('/src/import.js');
+    const { parse, desc, child, children } = await import('/src/xml.js');
+    const deck = blankDeck();
+    const path = 'ppt/slides/slide1.xml';
+    deck.slides[0].items = [
+      shape('line', 'Straight', 12, 18, 78, 30),
+      shape('line', 'Flipped curve', 40, 20, 170, 35, {
+        flipV: true,
+        startArrow: 'triangle',
+        endArrow: 'oval',
+        stroke: '#112233',
+        contours: [
+          {
+            closed: false,
+            nodes: [
+              { x: 0, y: 100, out: { x: 200, y: 100 } },
+              { x: 1000, y: 950 },
+            ],
+          },
+        ],
+      }),
+    ];
+    const curve = deck.slides[0].items[1];
+    deck.slides[0].comments = [
+      {
+        id: crypto.randomUUID(),
+        author: 'Reviewer',
+        text: 'Curve',
+        createdAt: new Date().toISOString(),
+        objectId: curve.id,
+        x: curve.x,
+        y: curve.y,
+        offsetX: 0,
+        offsetY: 0,
+      },
+    ];
+    const parts = exportDeck(deck);
+    const commentPart = Object.keys(parts.xml).find((p) =>
+      p.includes('/comments/')
+    );
+    parts.xml[commentPart] = parts.xml[commentPart].replace(
+      'ac:spMk',
+      'ac:cxnSpMk'
+    );
+    parts.xml[path] = parts.xml[path].replace(/<p:sp>.*?<\/p:sp>/s, (curve) =>
+      curve
+        .replaceAll('p:sp>', 'p:cxnSp>')
+        .replaceAll('p:nvSpPr>', 'p:nvCxnSpPr>')
+        .replace(
+          '<p:cNvSpPr/>',
+          '<p:cNvCxnSpPr><a:cxnSpLocks noSelect="1"/></p:cNvCxnSpPr>'
+        )
+    );
+    const opened = importDeck(parts);
+    const changes = exportDeck(opened.deck, { ...opened, parts });
+    const old = parse(parts.xml[path]).getElementsByTagNameNS('*', 'cxnSp')[1];
+    const repaired = parse(changes.xml[path]);
+    const freeform = desc(repaired, 'sp');
+    const again = importDeck({
+      ...parts,
+      xml: { ...parts.xml, ...changes.xml },
+    });
+    return {
+      changed: Object.keys(changes.xml).sort(),
+      shapeAnchor: !!desc(parse(changes.xml[commentPart]), 'spMk'),
+      stacking: children(desc(repaired, 'spTree'))
+        .slice(2)
+        .map((n) => n.localName),
+      sameGeometry: child(freeform, 'spPr').isEqualNode(child(old, 'spPr')),
+      sameIdentity: desc(freeform, 'cNvPr').isEqualNode(desc(old, 'cNvPr')),
+      reopened: again.deck.slides[0].items[1].kind,
+      locked: desc(freeform, 'spLocks').getAttribute('noSelect'),
+      secondRepair: again.slidesToRepair.size,
+    };
+  });
+  expect(result).toEqual({
+    changed: ['ppt/comments/modernComment1.xml', 'ppt/slides/slide1.xml'],
+    shapeAnchor: true,
+    stacking: ['cxnSp', 'sp'],
+    sameGeometry: true,
+    sameIdentity: true,
+    reopened: 'line',
+    locked: '1',
+    secondRepair: 0,
+  });
+});
+
+test('Triangle tips follow elbows, inverse diagonals and coincident Bézier handles', async ({
+  page,
+}) => {
+  await page.goto('/icon.png');
+  const angles = await page.evaluate(async () => {
+    const { readPresetOptions } = await import('/src/vector-xml.js');
+    const { vectorDrawing } = await import('/src/vector-view.js');
+    const { parse, A } = await import('/src/xml.js');
+    function tips(options) {
+      const svg = vectorDrawing({
+        kind: 'line',
+        w: 200,
+        h: 100,
+        startArrow: 'triangle',
+        endArrow: 'triangle',
+        stroke: '#112233',
+        ...options,
+      });
+      return [...svg.querySelectorAll('marker')].map((m) =>
+        Number(m.getAttribute('orient'))
+      );
+    }
+    function preset(name, guides = '') {
+      return readPresetOptions(
+        parse(
+          `<a:prstGeom xmlns:a="${A}" prst="${name}"><a:avLst>${guides}</a:avLst></a:prstGeom>`
+        ).documentElement
+      );
+    }
+    return [
+      tips(preset('bentConnector2')),
+      tips(preset('bentConnector3', '<a:gd name="adj1" fmla="val 100000"/>')),
+      tips(preset('lineInv')),
+      tips({
+        contours: [
+          {
+            nodes: [
+              { x: 0, y: 0, out: { x: 0, y: 0 } },
+              { x: 500, y: 500, in: { x: 0, y: 500 }, out: { x: 750, y: 0 } },
+              { x: 1000, y: 1000, in: { x: 1000, y: 1000 } },
+            ],
+          },
+        ],
+      }),
+    ];
+  });
+  expect(angles[0]).toEqual([180, 90]);
+  expect(angles[1]).toEqual([180, 90]);
+  expect(angles[2][0]).toBeCloseTo(153.435);
+  expect(angles[2][1]).toBeCloseTo(-26.565);
+  expect(angles[3][0]).toBe(-90);
+  expect(angles[3][1]).toBeCloseTo(63.435);
 });

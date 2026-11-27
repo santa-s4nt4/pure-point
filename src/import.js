@@ -1,6 +1,11 @@
 import { fitGroup } from './layers.js';
 import { readNotes } from './notes.js';
-import { readContours, readLineStyle, readPresetOptions } from './vector-xml.js';
+import {
+  customConnectors,
+  readContours,
+  readLineStyle,
+  readPresetOptions,
+} from './vector-xml.js';
 import { readDocumentMetadata } from './document-metadata.js';
 import { readLayerFlags } from './layer-xml.js';
 import { readPictureMedia } from './media-xml.js';
@@ -223,7 +228,9 @@ function readShape(n, ctx, index, layer, master) {
   else if (n.localName === 'graphicFrame') kind = 'unsupported';
   else if (contours) {
     const connector =
-      n.localName === 'cxnSp' || contours === presetOptions.contours;
+      n.localName === 'cxnSp' ||
+      contours === presetOptions.contours ||
+      (!body && contours.length === 1 && contours[0].fillMode === 'none');
     kind = connector && contours.every((c) => !c.closed) ? 'line' : 'path';
   } else if (simplePresets.has(geom)) kind = geom;
   else if (presetOptions.calloutShape) kind = 'callout';
@@ -538,6 +545,7 @@ export function importDeck(parts) {
   const pres = doc(presPath),
     targets = new Map(getRels(presPath).map((r) => [r.id, r.target])),
     sz = desc(pres, 'sldSz');
+  const slidesToRepair = new Set();
   const slides = children(desc(pres, 'sldIdLst'), 'sldId').map((id, i) => {
     const source = targets.get(rid(id));
     if (!xml[source]) throw Error('Slide ' + (i + 1) + ' is missing.');
@@ -545,6 +553,7 @@ export function importDeck(parts) {
     const page = parse(xml[source]),
       rel = getRels(source),
       layoutPath = rel.find((r) => r.type === 'slideLayout')?.target;
+    if (customConnectors(page).length) slidesToRepair.add(source);
     return {
       ...readSlidePage({
         xml, media, doc, pres, page, rel, layoutPath, getRels,
@@ -566,5 +575,6 @@ export function importDeck(parts) {
       doc
     ),
     presPath,
+    slidesToRepair,
   };
 }

@@ -28,7 +28,23 @@ const dashSegments = {
   sysDashDotDot: [3, 1, 1, 1, 1, 1],
 };
 
-function marker(type, color, defs) {
+function endpointAngle(contour, o, start) {
+  const segments = edges(contour);
+  if (!start) segments.reverse();
+  for (const { a, b } of segments) {
+    const tip = start ? a : b;
+    // A Bézier handle may sit on its endpoint. The next distinct control
+    // point (or anchor) determines the tangent, also for a flat line frame.
+    for (const p of start ? [a.out, b.in, b] : [b.in, a.out, a]) {
+      if (!p) continue;
+      const dx = (tip.x - p.x) * o.w,
+        dy = (tip.y - p.y) * o.h;
+      if (dx || dy) return (Math.atan2(dy, dx) * 180) / Math.PI;
+    }
+  }
+  return 0;
+}
+function marker(type, color, defs, contour, o, start) {
   if (!type || type === 'none') return;
   const id = 'arrow-' + crypto.randomUUID();
   const outline = type === 'arrow';
@@ -39,7 +55,7 @@ function marker(type, color, defs) {
     markerHeight: 4,
     refX: 9,
     refY: 5,
-    orient: 'auto-start-reverse',
+    orient: endpointAngle(contour, o, start),
     markerUnits: 'strokeWidth',
     overflow: 'visible',
   });
@@ -146,10 +162,7 @@ export function vectorDrawing(o, interactive = false) {
   root.classList.add('geometry');
   const color = o.stroke || 'none',
     size = o.strokeWidth ?? 1;
-  const defs = svg('defs'),
-    start = marker(o.startArrow, color.slice(0, 7), defs),
-    end = marker(o.endArrow, color.slice(0, 7), defs);
-  if (defs.childElementCount) root.append(defs);
+  const defs = svg('defs');
   for (const contours of paintPaths(o)) {
     const c = contours[0],
       d = contours.map((c) => pathData(c, o.w, o.h)).join(' '),
@@ -164,9 +177,14 @@ export function vectorDrawing(o, interactive = false) {
         'stroke-dasharray',
         dashSegments[o.dash].map((v) => v * size).join(' ')
       );
-    if ((start || end) && c.stroke !== false && size > 0)
-      addArrowStroke(root, defs, p, contours, o, size, start, end);
-    else root.append(p);
+    if (c.stroke !== false && size > 0 && (o.startArrow || o.endArrow)) {
+      const ink = color.slice(0, 7);
+      const start = marker(o.startArrow, ink, defs, c, o, true);
+      const end = marker(o.endArrow, ink, defs, contours.at(-1), o, false);
+      if (start || end)
+        addArrowStroke(root, defs, p, contours, o, size, start, end);
+      else root.append(p);
+    } else root.append(p);
     if (interactive && (o.kind === 'line' || (o.kind === 'path' && !o.fill))) {
       const hit = svg('path', {
         d,
@@ -180,6 +198,7 @@ export function vectorDrawing(o, interactive = false) {
       root.append(hit);
     }
   }
+  if (defs.childElementCount) root.prepend(defs);
   return root;
 }
 export function appendVertexOverlay(layer, entry, selected, scale) {

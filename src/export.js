@@ -4,6 +4,8 @@ import {
   geometryXML,
   strokeXML,
   connectorXML,
+  customConnectors,
+  connectorToFreeform,
   patchVector,
 } from './vector-xml.js';
 import { writeDocumentMetadata } from './document-metadata.js';
@@ -103,7 +105,7 @@ function textBody(o) {
   return `<p:txBody><a:bodyPr wrap="${o.autoWidth || o.noWrap ? 'none' : 'square'}"${o.spaceAtEdges ? ' spcFirstLastPara="1"' : ''} lIns="${l}" tIns="${t}" rIns="${r}" bIns="${b}" anchor="${{ middle: 'ctr', bottom: 'b' }[o.valign] || 't'}">${o.autoWidth ? '<a:spAutoFit/>' : '<a:noAutofit/>'}</a:bodyPr><a:lstStyle/>${runs}</p:txBody>`;
 }
 function shapeXML(o, id) {
-  if (o.kind === 'line') return connectorXML(o, id, xfrm(o));
+  if (o.kind === 'line' && !o.contours) return connectorXML(o, id, xfrm(o));
   const name = `<p:cNvPr id="${id}" name="${esc(o.name)}"/>`;
   return `<p:sp><p:nvSpPr>${name}<p:cNvSpPr${o.kind === 'text' ? ' txBox="1"' : ''}/><p:nvPr/></p:nvSpPr><p:spPr>${xfrm(o)}${geometryXML(o)}${solid(o.fill)}${strokeXML(o)}</p:spPr>${hasTextFrame(o) ? textBody(o) : ''}</p:sp>`;
 }
@@ -506,7 +508,12 @@ export function exportDeck(deck, base, assets = {}) {
   for (const s of deck.slides) {
     const old = base?.deck.slides.find((x) => x.id === (s.copyOf || s.id));
     if (s.relId) order.push(s.relId);
-    if (old && JSON.stringify(s) === JSON.stringify(old)) continue;
+    if (
+      old &&
+      !base.slidesToRepair?.has(old.source) &&
+      JSON.stringify(s) === JSON.stringify(old)
+    )
+      continue;
     let path = s.source,
       sr,
       doc;
@@ -626,10 +633,18 @@ export function exportDeck(deck, base, assets = {}) {
           pictures.patch(node, o, initial);
       },
       s.comments?.some((c) => c.objectId)
-        ? (o, node) => commentNodes.set(o.id, node)
+        ? (o, node) => commentNodes.set(o.id, { node })
         : null
     );
     pictures.finish(detachedMedia);
+    // Covers older files and imported preset connectors edited into freeforms.
+    for (const connector of customConnectors(doc)) {
+      const shape = connectorToFreeform(connector);
+      for (const c of s.comments || []) {
+        if (commentNodes.get(c.objectId)?.node === connector)
+          commentNodes.set(c.objectId, { node: shape, wasConnector: true });
+      }
+    }
     changes.xml[path] = serialize(doc);
     if (relChanged) changes.xml[relfile(path)] = serialize(sr);
   }
