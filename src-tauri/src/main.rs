@@ -284,15 +284,28 @@ fn main() {
     let mut launch_files: Vec<PathBuf> = Vec::new();
     #[cfg(target_os = "macos")]
     let mut started = false;
-    let builder = tauri::Builder::default().manage(Documents::default());
+    let documents = Documents::default();
     #[cfg(windows)]
-    let builder = builder.setup(|app| {
-        let file = std::env::args_os()
-            .skip(1)
-            .map(PathBuf::from)
-            .find(|path| is_presentation(path));
-        editor_window(app.handle(), "main".into(), file).map_err(Into::into)
-    });
+    if let Some(path) = std::env::args_os()
+        .skip(1)
+        .map(PathBuf::from)
+        .find(|path| is_presentation(path))
+    {
+        documents
+            .incoming
+            .lock()
+            .unwrap()
+            .insert("main".into(), path);
+    }
+    let context = tauri::generate_context!();
+    #[cfg(target_os = "macos")]
+    let context = {
+        let mut context = context;
+        // Finder sends its launch files through events before the first idle turn.
+        context.config_mut().app.windows[0].create = false;
+        context
+    };
+    let builder = tauri::Builder::default().manage(documents);
     #[cfg(target_os = "macos")]
     let builder = builder
         .menu(|app| {
@@ -395,7 +408,7 @@ fn main() {
             set_dirty,
             finish_close
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("pure-point could not start")
         .run(move |app, event| match event {
             #[cfg(target_os = "macos")]

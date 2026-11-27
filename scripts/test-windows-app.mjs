@@ -32,12 +32,13 @@ let browser;
 try {
   await expect.poll(async () => {
     if (app.exitCode !== null) throw Error('Installed app exited during startup');
-    return fetch(endpoint + '/json/version').then(r => r.ok, () => false);
-  }, { timeout: 60000 }).toBe(true);
+    return fetch(endpoint + '/json/list', { signal: AbortSignal.timeout(2000) })
+      .then((response) => response.ok ? response.json() : [], () => [])
+      .then((targets) => targets.map(({ type }) => type));
+  }, { message: 'The installed app exposes an editor target in WebView2', timeout: 60000 }).toContain('page');
   browser = await chromium.connectOverCDP(endpoint);
   const context = browser.contexts()[0];
-  await expect.poll(() => context.pages().length).toBeGreaterThan(0);
-  const page = context.pages()[0];
+  const page = context.pages()[0] ?? await context.waitForEvent('page', { timeout: 30000 });
   await expect(page.locator('#status')).toHaveText('Saved', { timeout: 30000 });
   await page.locator('.p-menu').click();
   await expect(page.locator('.menu [data-action=save] kbd')).toHaveText('Ctrl+S');

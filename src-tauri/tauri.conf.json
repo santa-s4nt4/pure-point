@@ -13,7 +13,6 @@
     "windows": [
       {
         "label": "main",
-        "create": false,
         "title": "pure-point",
         "width": 1440,
         "height": 890,
