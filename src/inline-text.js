@@ -1,6 +1,6 @@
 import { measureTextElement } from './text.js';
 import { editableParagraphs, applyParagraphs, convertDash } from './bullets.js';
-// Keep native selection and IME on the glyphs in the transformed slide.
+// Keep native selection and IME on the glyphs in the slide.
 function linesOf(input) {
   const lines = [...input.querySelectorAll('div,p,li')].filter(
     (line) => !line.querySelector('div,p,li')
@@ -24,7 +24,7 @@ function edge(line, atEnd) {
   return atEnd ? [nodes.at(-1), nodes.at(-1).length] : [nodes[0], 0];
 }
 
-function caretAt(input, event) {
+function caretAt(input, event, screenRect) {
   const doc = input.ownerDocument;
   const selection = doc.getSelection();
   if (event) {
@@ -46,7 +46,7 @@ function caretAt(input, event) {
   // Place the insertion point inside the nearest glyph run so its size and
   // typeface apply to the caret and to the next characters the user types.
   const distance = (line) => {
-    const r = line.getBoundingClientRect();
+    const r = screenRect(line);
     return Math.max(0, r.top - event.clientY, event.clientY - r.bottom);
   };
   const line = lines.reduce((a, b) => (distance(a) <= distance(b) ? a : b));
@@ -56,7 +56,7 @@ function caretAt(input, event) {
     const r = doc.createRange();
     r.setStart(node, offset);
     r.collapse(true);
-    const rect = r.getBoundingClientRect();
+    const rect = screenRect(r);
     return Math.hypot(
       event.clientX - rect.x,
       event.clientY - (rect.top + rect.height / 2)
@@ -100,6 +100,22 @@ function restorePosition(lines, mark) {
 export function inlineText({ item, object, event, finish, onInput, toLocal }) {
   const input = item.querySelector(':scope>.item-text');
   if (!input) return null;
+  const scene = item.closest('.scene');
+  function screenRect(node) {
+    const rect = node.getBoundingClientRect();
+    // Some WebKit versions report coordinates inside a CSS-zoomed element
+    // before applying its zoom. Pointer coordinates always use the viewport.
+    const sceneWidth = scene.getBoundingClientRect().width;
+    const boardWidth = scene.parentElement.getBoundingClientRect().width;
+    if (Math.abs(sceneWidth - boardWidth) < 0.5) return rect;
+    const zoom = Number(scene.style.zoom);
+    return new DOMRect(
+      rect.x * zoom,
+      rect.y * zoom,
+      rect.width * zoom,
+      rect.height * zoom
+    );
+  }
   const controller = new AbortController(),
     options = { signal: controller.signal };
   item.classList.add('editing-text');
@@ -213,17 +229,17 @@ export function inlineText({ item, object, event, finish, onInput, toLocal }) {
     const style = getComputedStyle(run);
     const size = parseFloat(style.fontSize);
     if (!(parseFloat(style.lineHeight) > size * 1.25)) return;
-    let rect = range.getBoundingClientRect();
+    let rect = screenRect(range);
     if (!rect.height) {
       const br = run.querySelector('br');
       if (!br) return;
-      rect = br.getBoundingClientRect();
+      rect = screenRect(br);
     }
     if (!rect.height) return;
-    const center = toLocal({
-      x: rect.x + rect.width / 2,
-      y: rect.y + rect.height / 2,
-    });
+    const center = toLocal(
+      { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 },
+      screenRect(item)
+    );
     Object.assign(caret.style, {
       left: center.x + 'px',
       top: center.y - size / 2 + 'px',
@@ -341,7 +357,7 @@ export function inlineText({ item, object, event, finish, onInput, toLocal }) {
     options
   );
   input.focus({ preventScroll: true });
-  caretAt(input, event);
+  caretAt(input, event, screenRect);
   paintCaret();
   return {
     o: object,
@@ -391,6 +407,7 @@ export function inlineText({ item, object, event, finish, onInput, toLocal }) {
     get composing() {
       return composing;
     },
+    paintCaret,
     close() {
       controller.abort();
       caret.remove();

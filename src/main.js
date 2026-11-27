@@ -591,9 +591,11 @@ function sizing() {
     ) + 'px';
   const sc = $('.artboard .scene');
   if (sc) {
-    sc.style.transform = `scale(${scale})`;
+    // Lay out at the display scale so WebKit paints live text at that size.
+    sc.style.zoom = scale;
     sc.style.setProperty('--hair', 1 / scale + 'px');
   }
+  editor?.paintCaret();
   updateZoomLabel();
   $('.page-label').textContent = 'Slide ' + (index + 1);
   drawRulers();
@@ -1510,8 +1512,7 @@ function startText(event) {
     object: o,
     event: event?.clientX !== undefined ? event : null,
     finish: finishText,
-    toLocal(point) {
-      const bounds = item.getBoundingClientRect();
+    toLocal(point, bounds) {
       const transform = entry.transform.multiply(shapeTransform(o));
       const delta = localDelta(
         transform,

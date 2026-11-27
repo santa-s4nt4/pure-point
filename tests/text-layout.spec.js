@@ -301,3 +301,57 @@ test('Double-clicking an overflowing text line edits that box, and wide leading 
   await editor.press('Shift+ArrowRight');
   await expect(caret).toBeHidden();
 });
+
+test('Canvas zoom lays out live text at 4K and keeps the caret aligned while zooming', async ({
+  browser,
+}) => {
+  const page = await browser.newPage({
+    viewport: { width: 1920, height: 1080 },
+    deviceScaleFactor: 2,
+  });
+  try {
+    await page.goto('http://127.0.0.1:1420');
+    await page.locator('#zoom').selectOption('0.75');
+    const board = page.locator('.artboard');
+    const input = page.getByRole('textbox', { name: 'Slide text' });
+    await board.dblclick({ position: { x: 120, y: 130 } });
+    await page.getByLabel('Line spacing', { exact: true }).selectOption('2');
+    await expect(input).toBeFocused();
+    await page.keyboard.insertText('Typography 日本語');
+    const caret = board.locator('.glyph-caret');
+    await expect(caret).toBeVisible();
+    const { x, y } = await caret.boundingBox();
+    await page.locator('.stage').dispatchEvent('wheel', {
+      deltaY: -16,
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+    });
+    await expect(input).toBeFocused();
+    const geometry = await caret.evaluate((mark) => {
+      const scene = mark.closest('.scene');
+      const scale = Number(getComputedStyle(scene).zoom);
+      const insertion = getSelection().getRangeAt(0).getBoundingClientRect();
+      const painted = mark.getBoundingClientRect();
+      return {
+        scale,
+        xError: Math.abs(insertion.x - painted.x),
+        yError: Math.abs(
+          insertion.y + insertion.height / 2 - painted.y - painted.height / 2
+        ),
+        height: painted.height,
+      };
+    });
+    expect(geometry.scale).toBeCloseTo(1.5 * Math.exp(16 * 0.012), 3);
+    expect(geometry.xError).toBeLessThan(0.5);
+    expect(geometry.yError).toBeLessThan(0.5);
+    expect(geometry.height).toBeCloseTo(16 * geometry.scale, 1);
+    await page.keyboard.insertText(' Clear');
+    await input.press('Meta+Enter');
+    await expect(board.locator('.item-text')).toHaveText('Typography 日本語 Clear');
+  } finally {
+    await page.close();
+  }
+});
