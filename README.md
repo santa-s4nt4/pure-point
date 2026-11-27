@@ -1,14 +1,16 @@
 # pure-point
 
-A macOS slide editor built with Rust, Tauri, and WebKit. Open `pure-point.app` to start. Click the filename or the animated **P** beside it in the center of the title bar for New, Open, Save, Save As, Export PDF, Present, Undo, and Redo.
+A Windows and macOS slide editor built with Rust and Tauri. On Windows 10/11 x64, download and run [pure-point-Windows-x64-setup.exe](https://github.com/santa-s4nt4/pure-point/releases/latest/download/pure-point-Windows-x64-setup.exe), then open **pure-point** from Start. The installer uses Microsoft Edge WebView2 and downloads the runtime if needed. The Windows installer is unsigned. On macOS, open `pure-point.app`. Click the filename or the animated **P** beside it in the center of the title bar for New, Open, Save, Save As, Export PDF, Present, Undo, and Redo.
 
 ## Documents
 
-On this Mac, New and startup read `~/Library/CloudStorage/OneDrive-電通/zero/template.potx`. The editor opens a fresh **untitled.pptx** based on that template. New, Open, and opening a PPTX from Finder each create a document window. Use **⌘W** to close the active presentation. The first Save asks for a name and location. If that file is absent, the app starts with a built-in title slide. The template stays in OneDrive. A widescreen template uses a 1920 × 1080 design canvas, with editable position and dimensions in pixels. Font sizes are in PowerPoint points. Opening an existing presentation retains its page dimensions.
+On macOS, New and startup read `~/Library/CloudStorage/OneDrive-電通/zero/template.potx`. The editor opens a fresh **untitled.pptx** based on that template. New, Open, and opening a PPTX from Finder each create a document window. Use **⌘W** to close the active presentation. The first Save asks for a name and location. If that file is absent, the app starts with a built-in title slide. On Windows, the app looks for `zero\template.potx` under `%OneDriveCommercial%`. Use **Open with → pure-point** in File Explorer to open an existing PPTX. The template stays in OneDrive. A widescreen template uses a 1920 × 1080 design canvas, with editable position and dimensions in pixels. Font sizes are in PowerPoint points. Opening an existing presentation retains its page dimensions.
 
 ### Sharing a Dentsu OneDrive file
 
-Save the presentation in `~/Library/CloudStorage/OneDrive-電通`. The sharing control appears just before the panel buttons. **Share…** reveals the saved file in Finder. Control-click the file, choose OneDrive’s **Share** command, and select **People in 電通** and **Can edit** in link settings. Choose **Copy link**.
+On Windows, **Share…** reveals a saved presentation in your work OneDrive folder in File Explorer. Use OneDrive’s context menu to choose the recipients and permissions.
+
+On macOS, save the presentation in `~/Library/CloudStorage/OneDrive-電通`. The sharing control appears just before the panel buttons. **Share…** reveals the saved file in Finder. Control-click the file, choose OneDrive’s **Share** command, and select **People in 電通** and **Can edit** in link settings. Choose **Copy link**.
 
 For direct **Copy link**, install PowerShell 7 for macOS and run the following command in Terminal. Then reopen the presentation. Microsoft handles sign-in and consent for delegated `Files.ReadWrite` access under your organization's policies. [PowerShell for macOS](https://learn.microsoft.com/en-us/powershell/scripting/install/install-powershell-on-macos) · [Microsoft Graph PowerShell installation](https://learn.microsoft.com/en-us/powershell/microsoftgraph/installation)
 
@@ -42,25 +44,29 @@ For a synced file in a recognized Dentsu business account, **Copy link** request
 - Insert an image with the image tool. Double-click the picture or choose **Crop image** from its right-click menu or **Design → Image**. Drag the crop edges or corners directly on the canvas. Drag inside the frame to reposition the image. Click outside or press Enter to apply, or press Escape to cancel. **Reset crop** restores the full image. The same menu and Design panel also offer **Replace image**.
 - Insert a local movie with the video tool. On macOS, AVFoundation prepares compatible MP4 media for PowerPoint. H.264/AAC MOV files can retain their original compressed video and audio. Hover over a movie or focus it to play, seek, mute, and adjust volume. Drop another video onto its frame to replace it. For YouTube or Vimeo, use the link tool and paste a video URL. Online players require a connection and a video that permits embedding.
 
-| Action | Mac shortcut |
-| --- | --- |
-| New / Open | ⌘N / ⌘O |
-| Save / Save As | ⌘S / ⇧⌘S |
-| Export PDF | ⇧⌘E |
-| Undo / Redo | ⌘Z / ⇧⌘Z |
-| Copy / Paste slides or objects | ⌘C / ⌘V |
-| Group / Ungroup | ⌘G / ⇧⌘G |
-| Flip selected objects horizontally | ⇧H (outside text entry) |
-| Toggle layer visibility / lock | ⇧⌘H / ⇧⌘L |
-| Select / Text / Rectangle / Ellipse / Line | V / T / R / O / L |
-| Show layout grid | G |
-| Nudge a selection | Arrow / Shift + arrow |
-| Finish text editing | ⌘Enter |
-| End presentation | Esc |
+Windows imports the original video and uses WebView2 to generate the poster. Use a format the target machine can play, such as H.264 MP4. For PDF export on Windows, choose **Save as PDF** in the print dialog.
+
+| Action | Mac shortcut | Windows shortcut |
+| --- | --- | --- |
+| New / Open | ⌘N / ⌘O | Ctrl+N / Ctrl+O |
+| Save / Save As | ⌘S / ⇧⌘S | Ctrl+S / Ctrl+Shift+S |
+| Export PDF | ⇧⌘E | Ctrl+Shift+E |
+| Undo / Redo | ⌘Z / ⇧⌘Z | Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z |
+| Copy / Paste slides or objects | ⌘C / ⌘V | Ctrl+C / Ctrl+V |
+| Group / Ungroup | ⌘G / ⇧⌘G | Ctrl+G / Ctrl+Shift+G |
+| Flip selected objects horizontally | ⇧H (outside text entry) | Shift+H |
+| Toggle layer visibility / lock | ⇧⌘H / ⇧⌘L | Ctrl+Shift+H / Ctrl+Shift+L |
+| Select / Text / Rectangle / Ellipse / Line | V / T / R / O / L | V / T / R / O / L |
+| Show layout grid | G | G |
+| Nudge a selection | Arrow / Shift + arrow | Arrow / Shift + arrow |
+| Finish text editing | ⌘Enter | Ctrl+Enter |
+| End presentation | Esc | Esc |
+
+Use **Ctrl+W** to close a Windows document and **Ctrl+Alt+P** to present. Ctrl-click adds individual items to a selection. Hold Alt while dragging to bypass snapping.
 
 ## File compatibility
 
-The Mac app can open presentations larger than 512 MB. It keeps a private working copy on disk and reads embedded images and video as needed. Saving streams the original package parts into the new PPTX. The 512 MiB memory guard applies to uncompressed XML only.
+The desktop app can open presentations larger than 512 MB. It keeps a private working copy on disk and reads embedded images and video as needed. Saving streams the original package parts into the new PPTX. The 512 MiB memory guard applies to uncompressed XML only.
 
 The editor reads Latin and East Asian typefaces independently, including localized font names and fonts supplied by PowerPoint on this Mac. For missing glyphs, it uses the Japanese run's character set to choose an Office substitute when applicable, then falls back to the slide theme. Text edits preserve the original PowerPoint font names and formatting of surrounding runs.
 
@@ -68,14 +74,16 @@ Text, shapes, groups, review comments, sections, and hidden-slide state are stor
 
 ## Development
 
-Install Rust, Node.js, and Xcode Command Line Tools on macOS. To run the desktop app:
+Install Node.js 22 and stable Rust. On macOS install Xcode Command Line Tools. On Windows use the x64 MSVC Rust toolchain, Visual Studio Build Tools with **Desktop development with C++**, and Microsoft Edge WebView2. [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+
+Run the desktop app from the project directory.
 
 ```sh
 npm ci
 npm run dev
 ```
 
-`npm run build` produces a locally signed `pure-point.app` in the project directory. The supplied icon artwork lives in `public/floating-P.png`, which Vite copies into `dist/` on every build.
+On Windows, `npm run build` produces an NSIS installer in `src-tauri/target/release/bundle/nsis/`. On macOS it produces a locally signed `pure-point.app` in the project directory. The supplied icon artwork lives in `public/floating-P.png`, which Vite copies into `dist/` on every build.
 
 ```sh
 npm test
@@ -84,11 +92,11 @@ cargo test --manifest-path src-tauri/Cargo.toml --release
 
 The UI tests use the installed Google Chrome. The browser development surface starts with an empty slide. The desktop app uses the local OneDrive template when available.
 
-## macOS releases
+## Desktop releases
 
-Each push to `main` runs the editor and Rust tests, builds an Apple Silicon and Intel universal app, and publishes `pure-point-macOS.zip` to GitHub Releases. After a successful build, Actions tags the tested commit. The patch version increases by the first-parent commit distance since the base version in `package.json` was set. Rerunning a commit reuses its version. If GitHub reports it could not allocate the Apple Silicon build runner, the release is retried once. The workflow can also be run manually from Actions to download a build artifact. Release bundles use an ad-hoc signature.
+Each push to `main` builds the macOS universal app and Windows x64 installer on GitHub-hosted runners. Both platforms run the editor and Rust tests. The Windows job silently installs the EXE and exercises opening a PPTX, saving with Ctrl+S, and opening a new window with Ctrl+N in the installed app. Once both jobs pass, the publisher attaches `pure-point-macOS.zip` and `pure-point-Windows-x64-setup.exe` to the same GitHub Release. After a successful build, Actions tags the tested commit. The patch version increases by the first-parent commit distance since the base version in `package.json` was set. Rerunning a commit reuses its version. If GitHub reports it could not allocate the Apple Silicon build runner, the release is retried once. The workflow can also be run manually from Actions to download a build artifact. Release bundles use an ad-hoc signature.
 
-If GitHub interrupts publication, the publisher retries and reuses any uploaded ZIP with the same SHA-256. To recover a previous tag build while its artifact is still available, open **Actions → macOS release → Run workflow**, select `main`, and enter the original run ID in `recover_run_id`. The workflow verifies the build and tag, then publishes the original ZIP.
+If GitHub interrupts publication, the publisher retries and reuses any uploaded asset with the same SHA-256. To recover a previous tag build while its artifact is still available, open **Actions → Desktop release → Run workflow**, select `main`, and enter the original run ID in `recover_run_id`. The workflow verifies the build and tag, then publishes the original artifacts.
 
 After a release is published, run the following on a Mac to download it and unpack the app on the Desktop.
 

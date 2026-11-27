@@ -135,11 +135,11 @@ test('Typing into a decorated empty paragraph highlights just the live glyph', a
   });
   expect(glyph.width).toBeGreaterThan(0);
   expect(glyph.width).toBeLessThan((await row.boundingBox()).width / 2);
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   expect(await paint()).toMatchObject({ text: '', width: 0 });
-  await page.keyboard.press('Meta+Shift+z');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
   expect(await paint()).toMatchObject({ text: '字', underlined: true });
-  await page.keyboard.press('Meta+Enter');
+  await page.keyboard.press('ControlOrMeta+Enter');
   expect(await paint()).toMatchObject({ text: '字', underlined: true });
 });
 
@@ -160,7 +160,7 @@ test('Edits at different positions keep the original PowerPoint run boundaries a
       .evaluate((span) => getSelection().collapse(span.firstChild, 2));
     await page.keyboard.insertText(character);
   }
-  await editor.press('Meta+Enter');
+  await editor.press('ControlOrMeta+Enter');
   await expect(frame.locator('[data-paragraph="0"] span')).toHaveText([
     'LiAght',
     'SmBall',

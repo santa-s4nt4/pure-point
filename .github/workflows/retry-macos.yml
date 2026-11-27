@@ -2,7 +2,7 @@ name: Retry unavailable macOS runner
 
 on:
   workflow_run:
-    workflows: ['macOS release']
+    workflows: ['Desktop release']
     types: [completed]
 
 permissions:

@@ -24,7 +24,7 @@ test('Text edits use the existing glyphs, stay editable through spacing changes,
   expect((await input.boundingBox()).height).toBeGreaterThan(
     initial.height * 1.8
   );
-  await input.press('Meta+Enter');
+  await input.press('ControlOrMeta+Enter');
   const body = board.locator('.item-text');
   await expect(body).toHaveText('Camera\ngeometry');
   const bounds = await body.boundingBox();
@@ -87,14 +87,14 @@ test('Shift H types in multiline point text and flips the object after editing',
   await input.press('Enter');
   await input.press('Shift+H');
   await expect(input).toBeFocused();
-  await input.press('Meta+Enter');
+  await input.press('ControlOrMeta+Enter');
   await expect(frame.locator('.item-text')).toHaveText('\n二行目\nH');
   await expect(frame).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
 
   await page.keyboard.press('Shift+h');
   await expect(frame).toHaveCSS('transform', 'matrix(-1, 0, 0, 1, 0, 0)');
   const download = page.waitForEvent('download');
-  await page.keyboard.press('Meta+Shift+s');
+  await page.keyboard.press('ControlOrMeta+Shift+s');
   const path = info.outputPath('mirrored.pptx');
   await (await download).saveAs(path);
   page = await openFileWindow(page, path);
@@ -273,7 +273,7 @@ test('Double-clicking an overflowing text line edits that box, and wide leading 
   await page.keyboard.insertText('First');
   await editor.press('Enter');
   await page.keyboard.insertText('Second');
-  await editor.press('Meta+Enter');
+  await editor.press('ControlOrMeta+Enter');
   const height = page.getByLabel('Height (px)', { exact: true });
   await height.fill('14');
   await height.press('Enter');
@@ -349,7 +349,7 @@ test('Canvas zoom lays out live text at 4K and keeps the caret aligned while zoo
     expect(geometry.yError).toBeLessThan(0.5);
     expect(geometry.height).toBeCloseTo(16 * geometry.scale, 1);
     await page.keyboard.insertText(' Clear');
-    await input.press('Meta+Enter');
+    await input.press('ControlOrMeta+Enter');
     await expect(board.locator('.item-text')).toHaveText('Typography 日本語 Clear');
   } finally {
     await page.close();

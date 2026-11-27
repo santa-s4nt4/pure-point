@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { uid } from './model.js';
 import { esc } from './xml.js';
 import { releaseClipboardMedia } from './clipboard-media.js';
-import { native, readCanvasClipboard } from './platform.js';
+import { native, nativeMac, shortcutLabel, readCanvasClipboard } from './platform.js';
 
 // Native Edit > Copy/Paste and the macOS keyboard shortcuts send DOM clipboard
 // events to the webview. Keep media in its original store; only the selection
@@ -12,7 +12,7 @@ const isImage = (type) => /^image\/(png|jpeg|gif|webp)$/i.test(type);
 
 async function readBrowserClipboard() {
   if (!navigator.clipboard?.read)
-    throw Error('Press ⌘V on the canvas to paste from the clipboard.');
+    throw Error(`Press ${shortcutLabel('⌘V')} on the canvas to paste from the clipboard.`);
   const data = { html: '', text: '', images: [] };
   for (const item of await navigator.clipboard.read()) {
     const imageType = item.types.find(isImage);
@@ -160,7 +160,7 @@ export function objectClipboard({
       (transfer.text && !hasFiles && !fileUrls);
     // Finder can advertise a file selection with only a thumbnail visible to WebKit.
     const readNative =
-      native &&
+      nativeMac &&
       event.isTrusted &&
       !selectionToken(transfer) &&
       (!hasContent || fileUrls || transfer.images.length < files.length);
@@ -182,7 +182,7 @@ export function objectClipboard({
     async paste(slidesOnly = false) {
       if (!available(document.activeElement)) return;
       const slide = destination();
-      const data = native
+      const data = nativeMac
         ? await readCanvasClipboard()
         : await readBrowserClipboard();
       await place(data, slide, slidesOnly);

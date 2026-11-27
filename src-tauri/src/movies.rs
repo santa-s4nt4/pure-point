@@ -1,21 +1,26 @@
+#[cfg(target_os = "macos")]
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Serialize;
 use std::{
     collections::HashMap,
-    ffi::{c_char, CStr, CString},
     fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write},
     net::{SocketAddr, TcpListener, TcpStream},
-    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex, OnceLock},
     thread,
     time::Duration,
 };
+#[cfg(target_os = "macos")]
+use std::{
+    ffi::{c_char, CStr, CString},
+    os::unix::ffi::OsStrExt,
+};
 use tempfile::{NamedTempFile, TempDir, TempPath};
 
 use crate::package::Source;
 
+#[cfg(target_os = "macos")]
 extern "C" {
     fn pp_prepare_movie(
         source: *const c_char,
@@ -202,6 +207,7 @@ fn extract(input: &mut impl Read, ext: &str, mime: &str, size: u64) -> Result<Mo
     }
     register_import(dir, path, mime)
 }
+#[cfg(target_os = "macos")]
 fn prepare(source: &Path, name: String) -> Result<Prepared, String> {
     if fs::metadata(source).map_err(|e| e.to_string())?.len() > MAX_VIDEO_IMPORT_BYTES {
         return Err("The video exceeds 512 MB.".into());
@@ -256,6 +262,37 @@ fn prepare(source: &Path, name: String) -> Result<Prepared, String> {
         h,
         asset: register_import(dir, path, "video/mp4")?,
         poster,
+    })
+}
+// WebView2 decodes the original file and captures its poster in preparedVideo.
+#[cfg(windows)]
+fn prepare(source: &Path, name: String) -> Result<Prepared, String> {
+    let mut file = File::open(source).map_err(|e| e.to_string())?;
+    let size = file.metadata().map_err(|e| e.to_string())?.len();
+    if size == 0 || size > MAX_VIDEO_IMPORT_BYTES {
+        return Err("Choose a video between 1 byte and 512 MB.".into());
+    }
+    let ext = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let mime = match ext.as_str() {
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "webm" => "video/webm",
+        "ogv" => "video/ogg",
+        "mpg" | "mpeg" => "video/mpeg",
+        "avi" => "video/x-msvideo",
+        "wmv" => "video/x-ms-wmv",
+        _ => return Err("Unsupported video file.".into()),
+    };
+    Ok(Prepared {
+        name,
+        w: 0.,
+        h: 0.,
+        poster: String::new(),
+        asset: extract(&mut file, &ext, mime, size)?,
     })
 }
 #[tauri::command]
@@ -614,6 +651,7 @@ mod tests {
             offset += n as u64;
         }
         let movie = tauri::async_runtime::block_on(finish_movie_upload(id)).unwrap();
+        #[cfg(target_os = "macos")]
         assert!(
             movie.w > 0. && movie.h > 0. && movie.poster.starts_with("data:image/png;base64,iVBOR")
         );

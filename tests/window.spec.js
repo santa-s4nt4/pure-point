@@ -72,7 +72,7 @@ test('The titlebar controls the workspace and keeps the document menu accessible
   await page.locator('.rail .select-slide').first().click();
   await expect(field).toHaveValue('Opening remarks');
   const download = page.waitForEvent('download');
-  await page.keyboard.press('Meta+s');
+  await page.keyboard.press('ControlOrMeta+s');
   await download;
   await expect(header.locator('#status')).toHaveText('Saved');
   await field.fill('Updated opening');
@@ -102,7 +102,7 @@ test('Edits made while the ZIP is writing remain unsaved and undo to the saved r
     await route.continue();
   });
   const downloaded = page.waitForEvent('download');
-  await field.press('Meta+s');
+  await field.press('ControlOrMeta+s');
   try {
     await writing;
     await expect(page.locator('header #status')).toHaveText('Working…');
@@ -120,7 +120,7 @@ test('Edits made while the ZIP is writing remain unsaved and undo to the saved r
   await expect(page.locator('header #status')).toHaveText('Unsaved changes');
   await expect(field).toHaveValue('Second version');
   await field.blur();
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await expect(field).toHaveValue('First version');
   await expect(page.locator('header #status')).toHaveText('Saved');
 });
@@ -220,7 +220,7 @@ test('New and Open create independent browser windows and preserve unsaved work'
   const notes = page.getByRole('textbox', { name: 'Slide script' });
   await notes.fill('Keep working here');
   const opened = page.context().waitForEvent('page');
-  await page.keyboard.press('Meta+n');
+  await page.keyboard.press('ControlOrMeta+n');
   const fresh = await opened;
   const title = fresh.locator('.artboard .item[data-id]').first();
   await title.click();
@@ -228,7 +228,7 @@ test('New and Open create independent browser windows and preserve unsaved work'
     '1.5'
   );
   const saved = fresh.waitForEvent('download');
-  await fresh.keyboard.press('Meta+Shift+s');
+  await fresh.keyboard.press('ControlOrMeta+Shift+s');
   const loaded = await openFileWindow(page, await (await saved).path());
   await expect(loaded.locator('.artboard .item[data-id]')).toHaveCount(1);
   await fresh.close();
@@ -250,14 +250,14 @@ test('Copied objects remain editable in another document window after the source
   await page.mouse.down();
   await page.mouse.move(b.x + 180, b.y + 160, { steps: 4 });
   await page.mouse.up();
-  await page.keyboard.press('Meta+c');
+  await page.keyboard.press('ControlOrMeta+c');
   const opened = context.waitForEvent('page');
-  await page.keyboard.press('Meta+n');
+  await page.keyboard.press('ControlOrMeta+n');
   const child = await opened;
   await expect(child.locator('#status')).toHaveText('Not saved yet');
   await page.close();
   await child.locator('.artboard').click({ position: { x: 40, y: 40 } });
-  await child.keyboard.press('Meta+v');
+  await child.keyboard.press('ControlOrMeta+v');
   await expect(
     child.locator('.artboard .item[data-id] > .geometry')
   ).toHaveCount(1);

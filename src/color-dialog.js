@@ -1,5 +1,6 @@
 import { createElement, Pipette, X } from 'lucide';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { nativeMac } from './platform.js';
+import { invoke } from '@tauri-apps/api/core';
 import {
   hsvFromRgb,
   rgbFromHsv,
@@ -92,7 +93,7 @@ export function chooseColor(
     options = { signal: lifetime.signal };
   $('.paint-close').append(createElement(X, { width: 15, height: 15 }));
   dropper.append(createElement(Pipette, { width: 16, height: 16 }));
-  dropper.hidden = !isTauri() && !window.EyeDropper;
+  dropper.hidden = !nativeMac && !window.EyeDropper;
   if (allowNone) {
     const type = document.createElement('select');
     type.setAttribute('aria-label', 'Paint type');
@@ -311,7 +312,7 @@ export function chooseColor(
   dropper.onclick = async () => {
     sampling = true;
     try {
-      const value = isTauri()
+      const value = nativeMac
         ? await invoke('sample_screen_color')
         : (await new window.EyeDropper().open()).sRGBHex;
       if (value && dialog.isConnected) {

@@ -2,9 +2,21 @@ import { mediaMime } from './media-format.js';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 export const native = isTauri();
+export const windows = /^Win/i.test(navigator.platform);
+export const nativeMac = native && !windows;
+export function shortcutLabel(keys = '') {
+  if (!windows) return keys;
+  return [
+    keys.includes('⌘') && 'Ctrl',
+    keys.includes('⇧') && 'Shift',
+    keys.includes('⌥') && 'Alt',
+    keys.replace(/[⌘⇧⌥]/g, ''),
+  ].filter(Boolean).join('+');
+}
+
 export const fileName = (path) =>
   path
-    ?.split('/')
+    ?.split(/[\\/]/)
     .pop()
     ?.replace(/\.pptx$/i, '') || 'untitled';
 export const shareDocumentMode = (path) =>
@@ -240,6 +252,7 @@ export function loadTypeface(font, faces, bold = false, italic = false) {
 function sourceFor(postscript) {
   if (!fontSources.has(postscript)) {
     const local = `local("${CSS.escape(postscript)}")`;
+    if (windows) return Promise.resolve(local);
     const source = new FontFace(postscript, local)
       .load()
       .then(

@@ -1,0 +1,61 @@
+name: Windows build
+
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      artifact_id:
+        value: ${{ jobs.windows.outputs.artifact_id }}
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: npm ci
+      - run: rustup update stable --no-self-update
+      - run: rustup default stable
+      - id: version
+        run: node scripts/release-version.mjs
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: test "$GITHUB_REF_NAME" = "${{ steps.version.outputs.tag }}"
+      - name: Test native document handling
+        run: cargo test --release --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build x64 NSIS installer
+        run: npm run build
+      - name: Install and launch the packaged editor
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe)
+          if ($files.Count -ne 1) { throw 'Expected one NSIS installer' }
+          New-Item -ItemType Directory -Path release
+          Copy-Item $files[0].FullName release/pure-point-Windows-x64-setup.exe
+          $install = Join-Path $env:RUNNER_TEMP 'pure-point-installed'
+          $result = Start-Process $files[0].FullName -ArgumentList '/S', "/D=$install" -Wait -PassThru
+          if ($result.ExitCode -ne 0) { throw "Installer exit code $($result.ExitCode)" }
+          node scripts/test-windows-app.mjs "$install/pure-point.exe"
+      - name: Test editor with Windows shortcuts
+        run: npm test -- --reporter=github,line
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: pure-point-Windows-x64
+          path: release/pure-point-Windows-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 7

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { native, pdfFontStyles } from './platform.js';
+import { native, nativeMac, pdfFontStyles } from './platform.js';
 import { scene } from './view.js';
 import editorStyles from './style.css?inline';
 import mediaStyles from './media.css?inline';
@@ -58,7 +58,7 @@ export async function pdfDocument(deck, assets) {
 
 export async function exportPDF(deck, _base, assets, name) {
   const pdf = await pdfDocument(deck, assets);
-  if (native)
+  if (nativeMac)
     return Boolean(
       await invoke('export_pdf', {
         ...pdf,
@@ -66,7 +66,7 @@ export async function exportPDF(deck, _base, assets, name) {
       })
     );
   const frame = document.createElement('iframe');
-  frame.title = 'PDF print preview';
+  frame.title = name.replace(/\.pptx$/i, '');
   frame.style.cssText =
     'position:fixed;left:-200vw;top:0;width:1px;height:1px;border:0';
   await new Promise((resolve) => {
@@ -75,6 +75,7 @@ export async function exportPDF(deck, _base, assets, name) {
     document.body.append(frame);
   });
   const doc = frame.contentDocument;
+  doc.title = frame.title;
   await Promise.all(
     [...doc.images].map(async (img) => {
       try {

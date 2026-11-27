@@ -65,7 +65,7 @@ svg {
   border-bottom: 1px solid var(--line);
   z-index: 3;
 }
-.native .top {
+.native-mac .top {
   padding-left: 85px;
 }
 .brand {

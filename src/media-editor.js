@@ -63,7 +63,7 @@ function waitForMedia(video, event) {
     const ok = () => done(),
       bad = () =>
         done(
-          Error('This video cannot be decoded on this Mac. Try an H.264 MP4.')
+          Error('This video cannot be decoded on this device. Try an H.264 MP4.')
         );
     const timeout = setTimeout(
       () => done(Error('Reading the video took too long.')),

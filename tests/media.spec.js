@@ -177,9 +177,9 @@ test('Crop an imported image, reopen the crop, and replace its source through De
     originalBox.x + originalBox.width,
     1
   );
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   expect(await frame.boundingBox()).toEqual(originalBox);
-  await page.keyboard.press('Meta+Shift+z');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
   const cropped = info.outputPath('cropped-image.pptx');
   const parts = await exportFile(page, cropped);
   const savedCrop = strFromU8(parts['ppt/slides/slide1.xml']).match(

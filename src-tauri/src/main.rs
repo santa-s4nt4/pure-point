@@ -1,13 +1,20 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod clipboard;
+#[cfg(target_os = "macos")]
 mod fonts;
+#[cfg(target_os = "macos")]
 mod gestures;
 mod movies;
 mod package;
+#[cfg(target_os = "macos")]
 mod pdf;
 mod player;
+#[cfg(target_os = "macos")]
 mod sharing;
+#[cfg(windows)]
+mod windows;
 
+#[cfg(target_os = "macos")]
 use core_text::{
     font_collection,
     font_descriptor::{SymbolicTraitAccessors, TraitAccessors},
@@ -22,6 +29,7 @@ use std::{
         Arc, Mutex,
     },
 };
+#[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItem, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, WebviewWindowBuilder};
 
@@ -56,6 +64,7 @@ fn document_window(app: &AppHandle, path: Option<PathBuf>) -> Result<(), String>
         state.incoming.lock().unwrap().remove(&label);
         e.to_string()
     })?;
+    #[cfg(target_os = "macos")]
     gestures::install_window(&window).map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())
 }
@@ -101,14 +110,22 @@ async fn read_document(state: &Documents, path: PathBuf) -> Result<Opened, Strin
 }
 #[tauri::command]
 async fn open_template(
-    app: AppHandle,
+    #[allow(unused_variables)] app: AppHandle,
     state: State<'_, Documents>,
 ) -> Result<Option<Opened>, String> {
+    #[cfg(target_os = "macos")]
     let path = app
         .path()
         .home_dir()
         .map_err(|e| e.to_string())?
         .join("Library/CloudStorage/OneDrive-電通/zero/template.potx");
+    #[cfg(windows)]
+    let path = {
+        let Some(root) = windows::onedrive_root() else {
+            return Ok(None);
+        };
+        root.join("zero").join("template.potx")
+    };
     match std::fs::metadata(&path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(format!("Could not access {}: {e}", path.display())),
@@ -182,6 +199,7 @@ struct Typeface {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     aliases: Vec<String>,
 }
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn system_fonts() -> Vec<Typeface> {
     let mut aliases = fonts::office_aliases();
@@ -228,6 +246,7 @@ fn finish_close(
     }
     Ok(())
 }
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn sample_screen_color() -> Result<Option<String>, String> {
     extern "C" {
@@ -239,8 +258,21 @@ async fn sample_screen_color() -> Result<Option<String>, String> {
     Ok((rgb >= 0).then(|| format!("#{rgb:06X}")))
 }
 fn main() {
-    tauri::Builder::default()
-        .manage(Documents::default())
+    let documents = Documents::default();
+    #[cfg(windows)]
+    if let Some(path) = std::env::args_os().skip(1).map(PathBuf::from).find(|p| {
+        p.extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("pptx"))
+    }) {
+        documents
+            .incoming
+            .lock()
+            .unwrap()
+            .insert("main".into(), path);
+    }
+    let builder = tauri::Builder::default().manage(documents);
+    #[cfg(target_os = "macos")]
+    let builder = builder
         .setup(gestures::install)
         .menu(|app| {
             let app_menu = SubmenuBuilder::new(app, "pure-point")
@@ -290,7 +322,8 @@ fn main() {
             {
                 let _ = app.emit_to(window.label(), "editor-command", event.id().as_ref());
             }
-        })
+        });
+    builder
         .on_window_event(|win, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -298,21 +331,35 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(target_os = "macos")]
             clipboard::read_canvas_clipboard,
             clipboard::store_selection,
             clipboard::read_selection,
             new_document_window,
             open_document,
             open_template,
+            #[cfg(target_os = "macos")]
             sharing::share_document_mode,
+            #[cfg(target_os = "macos")]
             sharing::reveal_share_document,
+            #[cfg(target_os = "macos")]
             sharing::copy_organization_link,
+            #[cfg(target_os = "macos")]
             pdf::export_pdf,
             release_document,
             save_document,
+            #[cfg(target_os = "macos")]
             system_fonts,
+            #[cfg(target_os = "macos")]
             sample_screen_color,
+            #[cfg(target_os = "macos")]
             fonts::font_data,
+            #[cfg(windows)]
+            windows::system_fonts,
+            #[cfg(windows)]
+            windows::share_document_mode,
+            #[cfg(windows)]
+            windows::reveal_share_document,
             player::youtube_player_url,
             movies::pick_movie,
             movies::start_movie_upload,
@@ -330,6 +377,7 @@ fn main() {
                 movies::clear();
                 app.state::<Documents>().sources.lock().unwrap().clear();
             }
+            #[cfg(target_os = "macos")]
             tauri::RunEvent::Opened { urls } => {
                 for path in urls
                     .iter()
@@ -365,6 +413,7 @@ fn main() {
         });
 }
 
+#[cfg(target_os = "macos")]
 #[cfg(test)]
 mod tests {
     use super::*;

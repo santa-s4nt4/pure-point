@@ -68,7 +68,7 @@ test('Drag to draw, edit a Bézier path, and round-trip dashed connectors with a
     /url/
   );
   const download = page.waitForEvent('download');
-  await page.keyboard.press('Meta+Shift+s');
+  await page.keyboard.press('ControlOrMeta+Shift+s');
   const path = info.outputPath('vectors.pptx');
   await (await download).saveAs(path);
   const xml = strFromU8(
@@ -88,7 +88,7 @@ test('Drag to draw, edit a Bézier path, and round-trip dashed connectors with a
   );
   await page.getByLabel('End arrow', { exact: true }).selectOption('diamond');
   const reexport = page.waitForEvent('download');
-  await page.keyboard.press('Meta+Shift+s');
+  await page.keyboard.press('ControlOrMeta+Shift+s');
   const changed = info.outputPath('vectors-again.pptx');
   await (await reexport).saveAs(changed);
   const after = strFromU8(
@@ -159,7 +159,7 @@ test('Design edits the whole curve or a selected point and keeps the handles on 
   await page.keyboard.press('Escape');
   await page.getByLabel('End arrow', { exact: true }).selectOption('stealth');
   const save = page.waitForEvent('download');
-  await page.keyboard.press('Meta+Shift+s');
+  await page.keyboard.press('ControlOrMeta+Shift+s');
   const pptx = info.outputPath('curved-line.pptx');
   await (await save).saveAs(pptx);
   const xml = strFromU8(
@@ -336,7 +336,7 @@ test('Text-box handles change width and height independently', async ({
   await art.dblclick({ position: { x: 90, y: 60 } });
   const editor = page.getByRole('textbox', { name: 'Slide text' });
   await editor.fill('Text box');
-  await editor.press('Meta+Enter');
+  await editor.press('ControlOrMeta+Enter');
   const text = art.locator('.item:has(.item-text)');
   await text.click();
   const before = await text.boundingBox();

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build --bundles app && ditto src-tauri/target/release/bundle/macos/pure-point.app pure-point.app && codesign --force --sign - pure-point.app",
+    "build": "node scripts/build-desktop.mjs",
     "dev:web": "vite --port 1420",
     "build:web": "vite build",
     "test": "playwright test"

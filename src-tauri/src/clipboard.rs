@@ -1,11 +1,15 @@
+#[cfg(target_os = "macos")]
 use std::ffi::{c_char, c_void, CStr};
+#[cfg(target_os = "macos")]
 use tauri::ipc::Response;
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn pp_read_canvas_clipboard() -> *mut c_char;
     fn free(ptr: *mut c_void);
 }
 
+#[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn read_canvas_clipboard() -> Result<Response, String> {
     tauri::async_runtime::spawn_blocking(|| {

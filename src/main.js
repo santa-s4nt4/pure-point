@@ -117,7 +117,7 @@ try {
   );
 } catch {}
 const root = $('#app');
-document.body.classList.toggle('native', platform.native);
+document.body.classList.toggle('native-mac', platform.nativeMac);
 root.innerHTML = workspace(action);
 bindAppearance($('#appearance'));
 const designUnit = 2;
@@ -259,14 +259,14 @@ async function refreshSharing() {
   shareMode = 'none';
   shareButton.hidden = true;
   const mode = await platform.shareDocumentMode(file).catch(() => 'none');
-  if (!file || path !== file || !['graph', 'finder'].includes(mode)) return;
+  if (!file || path !== file || !['graph', 'finder', 'explorer'].includes(mode)) return;
   shareMode = mode;
   shareButton.querySelector('span').textContent =
     mode === 'graph' ? 'Copy link' : 'Share…';
   shareButton.title =
     mode === 'graph'
       ? 'Copy a link that people at Dentsu can use to edit this file'
-      : 'Share this file using OneDrive in Finder';
+      : mode === 'explorer' ? 'Share this file using OneDrive in File Explorer' : 'Share this file using OneDrive in Finder';
   shareButton.hidden = false;
 }
 async function shareDocument() {
@@ -290,10 +290,12 @@ async function shareDocument() {
     const answer = await dialog(
       'Share in OneDrive',
       message +
-        'In Finder, Control-click the selected presentation and choose OneDrive’s Share command. In Link settings, select “People in Dentsu” and “Can edit”, then choose “Copy link”.',
+        (shareMode === 'explorer'
+          ? 'In File Explorer, right-click the selected presentation and choose OneDrive’s Share command. Choose the recipients and permissions before copying the link.'
+          : 'In Finder, Control-click the selected presentation and choose OneDrive’s Share command. In Link settings, select “People in Dentsu” and “Can edit”, then choose “Copy link”.'),
       [
         ['cancel', 'Cancel'],
-        ['reveal', 'Show in Finder'],
+        ['reveal', shareMode === 'explorer' ? 'Show in File Explorer' : 'Show in Finder'],
       ]
     );
     if (answer === 'reveal') await platform.revealShareDocument(file);
@@ -1626,7 +1628,7 @@ function menu(anchor, rows, point) {
   m.innerHTML = rows
     .map(
       ([k, label, glyph, key]) =>
-        `<button data-action="${k}" role="menuitem">${icon(glyph, 15)}${label}<kbd>${key || ''}</kbd></button>`
+        `<button data-action="${k}" role="menuitem">${icon(glyph, 15)}${label}<kbd>${platform.shortcutLabel(key)}</kbd></button>`
     )
     .join('');
   document.body.append(m);
@@ -1971,7 +1973,7 @@ function objectMenu(e) {
   e.preventDefault();
   finishText();
   const hit =
-    item && canvasEntry(layerEntries(active().items), item.dataset.id, e.metaKey);
+    item && canvasEntry(layerEntries(active().items), item.dataset.id, e.metaKey || e.ctrlKey);
   const id =
     row?.dataset.layerRow ||
     hit?.object.id ||
@@ -3105,7 +3107,7 @@ document.addEventListener('keydown', (e) => {
   const editing = e.target.closest(
       'input,textarea,select,[contenteditable="true"]'
     ),
-    cmd = e.metaKey || e.ctrlKey;
+    cmd = platform.windows ? e.ctrlKey && !e.getModifierState('AltGraph') : e.metaKey || e.ctrlKey;
   if (cropEdit && !cmd) {
     if (
       e.key === 'Escape' ||
@@ -3241,9 +3243,13 @@ document.addEventListener('keydown', (e) => {
         o: 'open',
         n: 'new',
         z: e.shiftKey ? 'redo' : 'undo',
+        y: platform.windows && 'redo',
+        w: platform.native && 'close',
+        e: e.shiftKey && 'pdf',
+        p: e.altKey && 'present',
       }[key];
     // The macOS menu handles its own accelerator even while a field has focus.
-    if (id && !platform.native && !(editing && key === 'z')) {
+    if (id && !platform.nativeMac && !(editing && ['z', 'y'].includes(key))) {
       e.preventDefault();
       run(id);
     }

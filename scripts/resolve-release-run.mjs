@@ -55,7 +55,7 @@ const [workflow, run, jobs, artifacts] = await Promise.all([
   get('actions/workflows/macos.yml'),
   get(source),
   get(`${source}/jobs?per_page=100`),
-  get(`${source}/artifacts?name=pure-point-macOS&per_page=2`),
+  get(`${source}/artifacts?per_page=100`),
 ]);
 const repoId = Number(GITHUB_REPOSITORY_ID);
 if (
@@ -67,7 +67,7 @@ if (
   run.status !== 'completed'
 ) {
   throw new Error(
-    'Choose a completed tag run from this repository’s macOS release workflow.'
+    'Choose a completed tag run from this repository’s desktop release workflow.'
   );
 }
 
@@ -86,24 +86,26 @@ const taggedBuild = jobs.jobs.some(
 if (!tag?.startsWith('v') || !taggedBuild)
   throw new Error('The tag build and version check must have succeeded.');
 
-const candidates = artifacts.artifacts.filter(
-  (a) =>
-    !a.expired &&
-    a.name === 'pure-point-macOS' &&
-    a.workflow_run?.id === run.id &&
+// Previous releases had a single macOS build. For dual-platform runs,
+// require the Windows build and both artifacts from that same run.
+const windows = jobs.jobs.find(job => job.name === 'windows / windows');
+if (windows && windows.conclusion !== 'success')
+  throw new Error('The Windows build must have succeeded.');
+const names = ['pure-point-macOS'];
+if (windows) names.push('pure-point-Windows-x64');
+const ids = names.map(name => {
+  const candidates = artifacts.artifacts.filter(a =>
+    !a.expired && a.name === name && a.workflow_run?.id === run.id &&
     a.workflow_run.repository_id === repoId &&
     a.workflow_run.head_repository_id === repoId &&
     a.workflow_run.head_sha === run.head_sha
-);
-if (candidates.length !== 1)
-  throw new Error(
-    'Expected one unexpired macOS artifact for the source commit.'
   );
+  if (candidates.length !== 1)
+    throw new Error(`Expected one unexpired ${name} artifact for the source commit.`);
+  return candidates[0].id;
+});
 
-console.log(
-  `Recovering ${tag} at ${run.head_sha} from run ${runId}, artifact ${candidates[0].id}.`
-);
-appendFileSync(
-  GITHUB_OUTPUT,
-  `tag=${tag}\ncommit=${run.head_sha}\nartifact_id=${candidates[0].id}\n`
+console.log(`Recovering ${tag} at ${run.head_sha} from run ${runId}, artifacts ${ids}.`);
+appendFileSync(GITHUB_OUTPUT,
+  `tag=${tag}\ncommit=${run.head_sha}\nartifact_ids=${ids.join(',')}\nhas_windows=${Boolean(windows)}\n`
 );

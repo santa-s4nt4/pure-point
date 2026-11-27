@@ -1,3 +1,4 @@
+import { shortcutLabel } from './platform.js';
 import { esc } from './xml.js';
 import { icon } from './view.js';
 
@@ -36,6 +37,6 @@ export function layerPanel(
       .join('');
   }
   const groupButton = (id, enabled, label, glyph, shortcut) =>
-    `<button class="icon-btn" data-action="${id}" aria-label="${label}" title="${label} (${shortcut})" ${enabled ? '' : 'disabled'}>${icon(glyph, 15)}</button>`;
+    `<button class="icon-btn" data-action="${id}" aria-label="${label}" title="${label} (${shortcutLabel(shortcut)})" ${enabled ? '' : 'disabled'}>${icon(glyph, 15)}</button>`;
   return `<section class="layer-panel"><div class="section-heading"><h3>Layers</h3><div class="layer-actions">${groupButton('group', canGroup, 'Group selection', 'group', '⌘G')}${groupButton('ungroup', canUngroup, 'Ungroup selection', 'ungroup', '⇧⌘G')}</div></div>${alignment}${rows(items, 0, false, false) || '<p class="empty-msg">No layers</p>'}</section>`;
 }

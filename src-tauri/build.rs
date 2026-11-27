@@ -1,4 +1,4 @@
-fn main() {
+fn compile_macos() {
     println!("cargo:rerun-if-changed=src/pdf.m");
     println!("cargo:rerun-if-changed=native/movie.m");
     println!("cargo:rerun-if-changed=native/color-sampler.m");
@@ -30,5 +30,11 @@ fn main() {
         .file("native/gestures.m")
         .flag("-fobjc-arc")
         .compile("pure_point_gestures");
+}
+
+fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        compile_macos();
+    }
     tauri_build::build()
 }

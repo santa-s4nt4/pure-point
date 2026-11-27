@@ -49,7 +49,7 @@ test('編集、グリッドへの吸着、PPTXへの保存と再読み込み', a
   await art.click({ position: { x: 30 * scale, y: 40 * scale } });
   const text = page.getByRole('textbox', { name: 'Slide text' });
   await text.fill('文字組み & layout');
-  await text.press('Meta+Enter');
+  await text.press('ControlOrMeta+Enter');
   await page.getByLabel('Font family', { exact: true }).selectOption('Georgia');
   await page.getByLabel('Size (pt)', { exact: true }).fill('32');
   await page.getByLabel('Size (pt)', { exact: true }).press('Enter');

@@ -4,7 +4,6 @@ use std::{
     collections::BTreeMap,
     fs::{self, File},
     io::{self, BufReader, Read, Write},
-    os::unix::fs::PermissionsExt,
     path::Path,
     sync::Arc,
 };
@@ -24,9 +23,14 @@ impl Source {
 }
 
 pub fn read(path: &Path) -> Result<Arc<Source>, String> {
-    let directory = tempfile::Builder::new()
+    let mut builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(fs::Permissions::from_mode(0o700));
+    }
+    let directory = builder
         .prefix("pure-point-document-")
-        .permissions(fs::Permissions::from_mode(0o700))
         .tempdir()
         .map_err(|e| e.to_string())?;
     // The destination must not exist for fs::copy to use macOS's APFS clone.

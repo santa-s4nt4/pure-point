@@ -14,11 +14,11 @@ test('Copy and paste selected objects and groups across slides as one undoable e
     await art.dblclick({ position: { x, y: 65 } });
     const editor = page.getByRole('textbox', { name: 'Slide text' });
     await editor.fill(label);
-    await editor.press('Meta+Enter');
+    await editor.press('ControlOrMeta+Enter');
   }
-  await page.keyboard.press('Meta+a');
-  await page.keyboard.press('Meta+c');
-  await page.keyboard.press('Meta+v');
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.press('ControlOrMeta+c');
+  await page.keyboard.press('ControlOrMeta+v');
   await expect(items).toHaveCount(4);
   expect(await items.locator('.item-text').allTextContents()).toEqual([
     'Left',
@@ -30,21 +30,21 @@ test('Copy and paste selected objects and groups across slides as one undoable e
     new Set(await items.evaluateAll((nodes) => nodes.map((n) => n.dataset.id)))
       .size
   ).toBe(4);
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await expect(items).toHaveCount(2);
-  await page.keyboard.press('Meta+a');
-  await page.keyboard.press('Meta+g');
-  await page.keyboard.press('Meta+c');
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.press('ControlOrMeta+g');
+  await page.keyboard.press('ControlOrMeta+c');
   await page.locator('.rail [data-action=addSlide]').click();
   await page.getByRole('button', { name: 'header title', exact: true }).click();
   await expect(page.locator('#slide-counter')).toHaveText('Slide 2 / 2');
-  await page.keyboard.press('Meta+v');
+  await page.keyboard.press('ControlOrMeta+v');
   const group = art.locator('.item:has(> .group-content)');
   await expect(
     art.locator('.item-text').filter({ hasText: 'Right' })
   ).toBeVisible();
   await expect(items).toHaveCount(2);
-  await page.keyboard.press('Meta+Shift+g');
+  await page.keyboard.press('ControlOrMeta+Shift+g');
   await expect(items).toHaveCount(3);
   await expect(group).toHaveCount(0);
 });
@@ -60,7 +60,7 @@ test('Layer and canvas menus copy objects and text editing uses the text clipboa
   await art.dblclick({ position: { x: 65, y: 65 } });
   const editor = page.getByRole('textbox', { name: 'Slide text' });
   await editor.fill('Original');
-  await editor.press('Meta+Enter');
+  await editor.press('ControlOrMeta+Enter');
   await page.locator('[data-action=layers]').click();
   await page.locator('.layer-row').first().click({ button: 'right' });
   await page.getByRole('menuitem', { name: /^Copy/ }).click();
@@ -68,16 +68,16 @@ test('Layer and canvas menus copy objects and text editing uses the text clipboa
   await page.getByRole('menuitem', { name: /^Paste/ }).click();
   await expect(items).toHaveCount(2);
   await items.last().dblclick();
-  await editor.press('Meta+a');
-  await editor.press('Meta+c');
+  await editor.press('ControlOrMeta+a');
+  await editor.press('ControlOrMeta+c');
   await editor.press('ArrowRight');
-  await editor.press('Meta+v');
-  await editor.press('Meta+Enter');
+  await editor.press('ControlOrMeta+v');
+  await editor.press('ControlOrMeta+Enter');
   await expect(items).toHaveCount(2);
   await expect(items.last().locator('.item-text')).toHaveText(
     'OriginalOriginal'
   );
-  await page.keyboard.press('Meta+v');
+  await page.keyboard.press('ControlOrMeta+v');
   await expect(items).toHaveCount(3);
   await expect(items.last().locator('.item-text')).toHaveText('Original');
 });
@@ -94,7 +94,7 @@ test('System text and screenshots paste as editable, undoable slide objects and 
   const lines = '発表のメモ 🎤\nSecond line · résumé';
   await board.click({ position: { x: 60, y: 50 } });
   await page.evaluate((s) => navigator.clipboard.writeText(s), lines);
-  await page.keyboard.press('Meta+v');
+  await page.keyboard.press('ControlOrMeta+v');
   await expect(text).toBeVisible();
   expect(await text.innerText()).toBe(lines);
   await expect(page.getByLabel('Font family', { exact: true })).toHaveValue(
@@ -102,14 +102,14 @@ test('System text and screenshots paste as editable, undoable slide objects and 
   );
   await expect(page.getByLabel('Size (pt)', { exact: true })).toHaveValue('16');
   await expect(board.locator('.select-box')).toHaveCount(1);
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await expect(text).toHaveCount(0);
-  await page.keyboard.press('Meta+Shift+z');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
   await expect(text).toHaveText(lines, { useInnerText: true });
 
   // An external screenshot replaces a previously copied pure-point object.
   await board.locator('.item[data-id]').click();
-  await page.keyboard.press('Meta+c');
+  await page.keyboard.press('ControlOrMeta+c');
   const png = await page.screenshot({
     clip: { x: 10, y: 50, width: 85, height: 40 },
   });
@@ -118,7 +118,7 @@ test('System text and screenshots paste as editable, undoable slide objects and 
     const blob = new Blob([bytes], { type: 'image/png' });
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
   }, png.toString('base64'));
-  await page.keyboard.press('Meta+v');
+  await page.keyboard.press('ControlOrMeta+v');
   await expect(image).toBeVisible();
   await expect(text).toHaveCount(1);
   await expect(board.locator('.select-box')).toHaveCount(1);
@@ -127,15 +127,15 @@ test('System text and screenshots paste as editable, undoable slide objects and 
     .toEqual([85, 40]);
   const imageData = await image.getAttribute('src');
   expect(imageData).toMatch(/^data:image\/png;base64,/);
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await expect(image).toHaveCount(0);
   await expect(text).toHaveCount(1);
-  await page.keyboard.press('Meta+Shift+z');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
   await expect(image).toBeVisible();
 
   const output = info.outputPath('clipboard.pptx');
   const saved = page.waitForEvent('download');
-  await page.keyboard.press('Meta+Shift+s');
+  await page.keyboard.press('ControlOrMeta+Shift+s');
   await (await saved).saveAs(output);
   await expect(page.locator('#status')).toHaveText('Saved');
   await page.locator('.p-menu').click();

@@ -1,4 +1,4 @@
-name: macOS release
+name: Desktop release
 
 on:
   push:
@@ -60,6 +60,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  windows:
+    if: inputs.recover_run_id == ''
+    uses: ./.github/workflows/windows.yml
+
   recover:
     if: github.event_name == 'workflow_dispatch' && inputs.recover_run_id != ''
     runs-on: ubuntu-latest
@@ -69,7 +73,8 @@ jobs:
     outputs:
       tag: ${{ steps.source.outputs.tag }}
       commit: ${{ steps.source.outputs.commit }}
-      artifact_id: ${{ steps.source.outputs.artifact_id }}
+      artifact_ids: ${{ steps.source.outputs.artifact_ids }}
+      has_windows: ${{ steps.source.outputs.has_windows }}
     steps:
       - name: Require the default branch for recovery
         env:
@@ -86,10 +91,10 @@ jobs:
         run: node scripts/resolve-release-run.mjs "$SOURCE_RUN"
 
   publish:
-    needs: [build, recover]
+    needs: [build, windows, recover]
     if: >-
       !cancelled() &&
-      ((needs.build.result == 'success' && (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'push' && github.ref == 'refs/heads/main'))) ||
+      ((needs.build.result == 'success' && needs.windows.result == 'success' && (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'push' && github.ref == 'refs/heads/main'))) ||
        needs.recover.result == 'success')
     runs-on: ubuntu-latest
     concurrency:
@@ -108,7 +113,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
-          artifact-ids: ${{ needs.recover.outputs.artifact_id || needs.build.outputs.artifact_id }}
+          artifact-ids: ${{ needs.recover.outputs.artifact_ids || format('{0},{1}', needs.build.outputs.artifact_id, needs.windows.outputs.artifact_id) }}
           run-id: ${{ inputs.recover_run_id || github.run_id }}
           github-token: ${{ github.token }}
           merge-multiple: true
@@ -123,4 +128,8 @@ jobs:
       - name: Publish the app to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/publish-release.sh "$RELEASE_TAG" release/pure-point-macOS.zip
+          HAS_WINDOWS: ${{ needs.windows.result == 'success' || needs.recover.outputs.has_windows == 'true' }}
+        run: |
+          assets=(release/pure-point-macOS.zip)
+          if [[ "$HAS_WINDOWS" == true ]]; then assets+=(release/pure-point-Windows-x64-setup.exe); fi
+          bash scripts/publish-release.sh "$RELEASE_TAG" "${assets[@]}"

@@ -24,7 +24,7 @@ test('Callouts, rectangle corners and text decorations remain editable after a P
   }
   async function download(name) {
     const ready = page.waitForEvent('download');
-    await page.keyboard.press('Meta+Shift+s');
+    await page.keyboard.press('ControlOrMeta+Shift+s');
     const path = info.outputPath(name);
     await (await ready).saveAs(path);
     return path;
@@ -72,7 +72,7 @@ test('Callouts, rectangle corners and text decorations remain editable after a P
     'text-decoration-line',
     'underline line-through'
   );
-  await edit.press('Meta+Enter');
+  await edit.press('ControlOrMeta+Enter');
 
   await callout.dblclick();
   await expect(edit).toBeFocused();

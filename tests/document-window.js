@@ -3,7 +3,7 @@ import { expect } from '@playwright/test';
 export async function openFileWindow(
   page,
   file,
-  open = () => page.keyboard.press('Meta+o')
+  open = () => page.keyboard.press('ControlOrMeta+o')
 ) {
   const [picker] = await Promise.all([
     page.waitForEvent('filechooser'),

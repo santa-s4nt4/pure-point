@@ -114,7 +114,7 @@ test('Layer and canvas selection, marquee, keyboard groups, visibility and lock'
   await nodes.nth(0).click();
   await nodes.nth(1).click({ modifiers: ['Shift'] });
   await expect(art.locator('.selection-outline')).toHaveCount(2);
-  await page.keyboard.press('Meta+g');
+  await page.keyboard.press('ControlOrMeta+g');
   await expect(nodes).toHaveCount(1);
   const childrenBox = await art
     .locator('.group-content > .item')
@@ -136,7 +136,7 @@ test('Layer and canvas selection, marquee, keyboard groups, visibility and lock'
   await expect(nodes).toHaveCSS('transform', 'matrix(-1, 0, 0, 1, 0, 0)');
   await page.keyboard.press('Shift+h');
   await expect(nodes).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
-  await page.keyboard.press('Meta+Shift+g');
+  await page.keyboard.press('ControlOrMeta+Shift+g');
   await expect(nodes).toHaveCount(2);
   const frame = await art.boundingBox(),
     left = await nodes.nth(0).boundingBox(),
@@ -153,7 +153,7 @@ test('Layer and canvas selection, marquee, keyboard groups, visibility and lock'
   await page.locator('[data-action=layers]').click();
   const row = (name) => page.getByRole('button', { name, exact: true });
   await row('Square A').click();
-  await row('Circle B').click({ modifiers: ['Meta'] });
+  await row('Circle B').click({ modifiers: ['ControlOrMeta'] });
   await page
     .getByRole('button', { name: 'Group selection', exact: true })
     .click();

@@ -50,15 +50,15 @@ test('Slide selections in the navigator use section and deletion shortcuts', asy
   await expect(page.locator('.inspector [data-action=slides]')).toHaveCount(0);
   const pages = page.locator('.rail');
   await pages.locator('[data-slide="1"]').click();
-  await pages.locator('[data-slide="2"]').click({ modifiers: ['Meta'] });
-  await page.keyboard.press('Meta+g');
+  await pages.locator('[data-slide="2"]').click({ modifiers: ['ControlOrMeta'] });
+  await page.keyboard.press('ControlOrMeta+g');
   await page.getByLabel('Section name').fill('Middle');
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(pages.getByRole('button', { name: /Middle/ })).toBeVisible();
   await expect(pages.locator('.chosen')).toHaveCount(2);
   await page.keyboard.press('Backspace');
   await expect(pages.locator('[data-slide]')).toHaveCount(2);
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await expect(pages.locator('[data-slide]')).toHaveCount(4);
   await pages.locator('[data-slide="3"]').click();
   await page.keyboard.press('Delete');
@@ -79,7 +79,7 @@ test('Alignment, live color, layer ordering, and object comments round-trip', as
   await page.getByRole('button', { name: 'Fill', exact: true }).click();
   await page.getByLabel('Hex color').fill('009966');
   await expect(page.locator('[data-color=fill]')).toContainText('009966');
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await expect(page.locator('[data-color=fill]')).toContainText('FF0022');
   await page.locator('[data-color=fill]').click();
   await page.getByLabel('Hex color').fill('#009966');
@@ -154,7 +154,7 @@ test('Color picker previews drags, formats, document colors and opacity, then re
     live
   );
   await page.mouse.up();
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await expect(trigger).toHaveAttribute('data-value', '#FF0022');
   await trigger.click();
   await picker.getByRole('button', { name: '#334455', exact: true }).click();
@@ -243,9 +243,9 @@ test('The navigator pastes independent slides in order, including notes and impo
     await page.getByLabel('Slide script').fill(note);
   }
   await tiles.nth(2).click();
-  await tiles.nth(0).click({ modifiers: ['Meta'] });
-  await page.keyboard.press('Meta+c');
-  await page.keyboard.press('Meta+v');
+  await tiles.nth(0).click({ modifiers: ['ControlOrMeta'] });
+  await page.keyboard.press('ControlOrMeta+c');
+  await page.keyboard.press('ControlOrMeta+v');
   await expect(tiles).toHaveCount(6);
   await expect(page.locator('.rail .chosen')).toHaveCount(2);
   await expect(page.locator('.rail .active')).toHaveAttribute(
@@ -253,9 +253,9 @@ test('The navigator pastes independent slides in order, including notes and impo
     '3'
   );
   await expect(page.locator('.artboard [data-id]')).toHaveCount(2);
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await expect(tiles).toHaveCount(4);
-  await page.keyboard.press('Meta+Shift+z');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
   await expect(tiles).toHaveCount(6);
   await tiles.nth(3).click();
   await page.getByLabel('Slide script').fill('Edited copy');

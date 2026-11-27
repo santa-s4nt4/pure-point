@@ -47,7 +47,7 @@ test('Empty content places the caret at the body indent, and Enter continues or 
   await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
   await page.keyboard.insertText('Plain paragraph');
-  await input.press('Meta+Enter');
+  await input.press('ControlOrMeta+Enter');
   await expect(frame.locator('li')).toHaveCount(2);
   const save = page.waitForEvent('download');
   await page.locator('.p-menu').click();
@@ -85,10 +85,10 @@ test('Dash-space is a real editable bullet with native undo, IME and wrapping', 
   await board.dblclick({ position: { x: 80, y: 80 } });
   await page.keyboard.type('- ');
   await expect(editor.locator('li')).toHaveCount(1);
-  await editor.press('Meta+z');
+  await editor.press('ControlOrMeta+z');
   await expect(editor.locator('li')).toHaveCount(0);
   await expect(editor).toHaveText('-');
-  await editor.press('Meta+Shift+z');
+  await editor.press('ControlOrMeta+Shift+z');
   await expect(editor.locator('li')).toHaveCount(1);
   await page.keyboard.insertText('項目');
   await page.keyboard.press('Enter');
@@ -117,7 +117,7 @@ test('Dash-space is a real editable bullet with native undo, IME and wrapping', 
   await page.keyboard.type(' ');
   await expect(editor.locator('li')).toHaveCount(2);
   await page.keyboard.insertText('Last');
-  await editor.press('Meta+Enter');
+  await editor.press('ControlOrMeta+Enter');
   await expect(board.locator('li')).toHaveText(['項目', 'Last']);
   await expect(board).toContainText('a-b c');
 });
@@ -249,7 +249,7 @@ test('Tab and Shift-Tab adjust only selected paragraphs and persist their PowerP
   await page.keyboard.insertText('Two');
   await editor.press('Enter');
   await page.keyboard.insertText('Three');
-  await editor.press('Meta+Enter');
+  await editor.press('ControlOrMeta+Enter');
   await board.locator('.item').dblclick();
   await editor.evaluate((n) => {
     const rows = n.querySelectorAll('div');
@@ -267,9 +267,9 @@ test('Tab and Shift-Tab adjust only selected paragraphs and persist their PowerP
   expect(await editor.evaluate(() => getSelection().toString())).toContain(
     'wo'
   );
-  await editor.press('Meta+Enter');
+  await editor.press('ControlOrMeta+Enter');
   const downloaded = page.waitForEvent('download');
-  await page.keyboard.press('Meta+Shift+s');
+  await page.keyboard.press('ControlOrMeta+Shift+s');
   const zip = unzipSync(await readFile(await (await downloaded).path()));
   const xml = strFromU8(zip['ppt/slides/slide1.xml']);
   const rows = await page.evaluate(

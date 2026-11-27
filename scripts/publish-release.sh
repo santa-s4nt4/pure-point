@@ -2,16 +2,16 @@
 set -euo pipefail
 
 tag=${1:?Expected a release tag}
-archive=${2:?Expected the path to the release ZIP}
+shift
+(( $# > 0 )) || exit 1
+assets=("$@")
 : "${GH_REPO:?Expected owner/repository}"
 : "${RELEASE_COMMIT:?Expected the commit used to build the app}"
-test -s "$archive"
-name=$(basename "$archive")
-digest="sha256:$(sha256sum "$archive" | cut -d ' ' -f 1)"
+for asset in "${assets[@]}"; do test -s "$asset"; done
 tag_ref=$(jq -rn --arg ref "refs/tags/$tag" '$ref | @uri')
 
 publish() {
-  local current releases release uploaded
+  local current releases release uploaded asset name digest
   current=$(gh api "repos/$GH_REPO/commits/$tag_ref" --jq '.sha') || return 1
   if [[ "$current" != "$RELEASE_COMMIT" ]]; then
     echo "Tag $tag points to $current, but the app was built from $RELEASE_COMMIT." >&2
@@ -25,10 +25,14 @@ publish() {
     gh release create "$tag" --draft --verify-tag --title "pure-point $tag" --generate-notes || return 1
   fi
 
-  uploaded=$(jq -r --arg name "$name" 'first(.assets[]? | select(.name == $name and .state == "uploaded") | .digest) // ""' <<<"$release") || return 1
-  if [[ "$uploaded" != "$digest" ]]; then
-    gh release upload "$tag" "$archive" --clobber || return 1
-  fi
+  for asset in "${assets[@]}"; do
+    name=$(basename "$asset")
+    digest="sha256:$(sha256sum "$asset" | cut -d ' ' -f 1)"
+    uploaded=$(jq -r --arg name "$name" 'first(.assets[]? | select(.name == $name and .state == "uploaded") | .digest) // ""' <<<"$release") || return 1
+    if [[ "$uploaded" != "$digest" ]]; then
+      gh release upload "$tag" "$asset" --clobber || return 1
+    fi
+  done
   if ! jq -e '.draft == false' <<<"$release" >/dev/null; then
     gh release edit "$tag" --draft=false || return 1
   fi

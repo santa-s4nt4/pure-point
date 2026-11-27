@@ -17,7 +17,7 @@ for (const path of ['package.json', 'package-lock.json', 'src-tauri/tauri.conf.j
   writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
 }
 for (const path of ['src-tauri/Cargo.toml', 'src-tauri/Cargo.lock']) {
-  const data = read(path);
+  const data = read(path).replaceAll('\r\n', '\n');
   const record = 'name = "pure-point"\nversion = "' + base + '"';
   if (!data.includes(record)) throw Error('Unexpected app version in ' + path);
   writeFileSync(path, data.replace(record, 'name = "pure-point"\nversion = "' + version + '"'));

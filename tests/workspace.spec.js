@@ -116,7 +116,7 @@ test('Pinch preserves the canvas point, doubles create editable text, deck size 
   await art.dblclick({ position: { x: 80, y: 80 } });
   const entry = page.getByRole('textbox', { name: 'Slide text' });
   await entry.fill('Double-click to write');
-  await entry.press('Meta+Enter');
+  await entry.press('ControlOrMeta+Enter');
   await expect(art.locator('.item-text')).toHaveText('Double-click to write');
   await art.locator('.item-text').dblclick({ force: true });
   await expect(entry).toBeVisible();
@@ -315,7 +315,7 @@ test('Design number fields support repeated arrows and one undo per drag', async
   await page.goto('/');
   await page.locator('.artboard').dblclick({ position: { x: 120, y: 130 } });
   await page.keyboard.insertText('Position');
-  await page.keyboard.press('Meta+Enter');
+  await page.keyboard.press('ControlOrMeta+Enter');
   const x = page.getByLabel('X (px)', { exact: true });
   const first = Number(await x.inputValue());
   await x.focus();
@@ -333,6 +333,6 @@ test('Design number fields support repeated arrows and one undo per drag', async
   expect(Number(await x.inputValue())).toBeCloseTo(first + 13, 2);
   await page.mouse.up();
   await x.blur();
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   expect(Number(await x.inputValue())).toBeCloseTo(first + 1, 2);
 });
