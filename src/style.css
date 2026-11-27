@@ -831,6 +831,14 @@ h3 {
   border: 0;
   caret-color: currentColor;
 }
+/* WebKit can remove a relatively positioned paragraph when replacing its
+   entire marked range during IME confirmation. Keep it in normal flow and
+   apply the PowerPoint baseline offset without changing the editing boundary. */
+.item-text.text-edit > div,
+.item-text.text-edit li {
+  position: static;
+  transform: translateY(var(--line-offset, 0px));
+}
 .artboard .point-text.text-edit {
   outline: var(--hair) solid #394fef;
 }

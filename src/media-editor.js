@@ -341,6 +341,7 @@ export function createMediaEditor({
     }
     put(result.files, getAssets());
     change(() => {
+      delete target.fallbackAsset;
       Object.assign(target, result.props, { name: result.name });
     });
   }
@@ -409,8 +410,18 @@ export function createMediaEditor({
     async cropImage(target) {
       const deck = getDeck(),
         slide = getSlide();
-      if (isBusy() || editableMedia(slide.items, target.id) !== target) return;
-      const crop = await chooseCrop(target, getAssets()[target.asset]);
+      if (
+        isBusy() ||
+        target?.kind !== 'image' ||
+        editableMedia(slide.items, target.id) !== target
+      )
+        return;
+      const assets = getAssets();
+      const crop = await chooseCrop(
+        target,
+        assets[target.asset],
+        assets[target.fallbackAsset]
+      );
       if (
         crop &&
         stillActive(deck, slide) &&

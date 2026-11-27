@@ -134,6 +134,11 @@ test('Layer and canvas selection, marquee, keyboard groups, visibility and lock'
   await art.click({ position: { x: 10, y: 10 } });
   await expect(art.locator('.select-box')).toHaveCount(0);
   await art.locator('.group-content > .item').first().click();
+  await art.locator('.group-content > .item').first().click({ button: 'right' });
+  await page.getByRole('menuitem', { name: /Flip horizontal/ }).click();
+  await expect(nodes).toHaveCSS('transform', 'matrix(-1, 0, 0, 1, 0, 0)');
+  await page.keyboard.press('Shift+h');
+  await expect(nodes).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
   await page.keyboard.press('Meta+Shift+g');
   await expect(nodes).toHaveCount(2);
   const frame = await art.boundingBox(),

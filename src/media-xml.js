@@ -13,22 +13,43 @@ import {
   parse,
   relative,
   resolve,
+  solid,
 } from './xml.js';
 import { onlineVideo } from './media-format.js';
+import { readPictureEffects, pictureEffectsXML } from './picture-effects.js';
 
 const mediaType =
   'http://schemas.microsoft.com/office/2007/relationships/media';
 const mediaNS = 'http://schemas.microsoft.com/office/powerpoint/2010/main';
 const mediaExtension = '{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}';
+const svgNS = 'http://schemas.microsoft.com/office/drawing/2016/SVG/main';
+const svgExtension = '{96DAC541-7B7A-43D3-8B79-37D633B846F1}';
+const svgExtXML = (id) =>
+  `<a:ext uri="${svgExtension}"><asvg:svgBlip xmlns:asvg="${svgNS}" r:embed="${id}"/></a:ext>`;
 function reference(element, key) {
   return element?.getAttributeNS(R, key) || attr(element, 'r:' + key);
 }
-export function readPictureMedia(pic, obj, relations) {
+export function readPictureMedia(pic, obj, relations, assets) {
+  const blip = child(child(pic, 'blipFill'), 'blip');
+  const resolve = (id) => id && relations.find((r) => r.id === id);
+  const imagePart = (node) => {
+    const rel = resolve(reference(node, 'embed'));
+    return rel?.type === 'image' && rel.target && assets[rel.target]
+      ? rel.target
+      : undefined;
+  };
+  // PowerPoint can store just the SVG extension, or an SVG and a raster
+  // representation in the same blip. Keep both parts when copying the picture.
+  const svg = imagePart(blip?.getElementsByTagNameNS(svgNS, 'svgBlip')[0]);
+  const original = imagePart(blip);
+  obj.asset = svg || original;
+  if (svg && original && svg !== original) obj.fallbackAsset = original;
+  if (!obj.asset) obj.kind = 'unsupported';
+  readPictureEffects(blip, obj);
   const video = desc(pic, 'videoFile'),
     media = desc(pic, 'media');
   const web = desc(pic, 'webVideoPr');
   if (!video && !web) return;
-  const resolve = (id) => relations.find((r) => r.id === id);
   const link = resolve(reference(video, 'link'));
   const source = resolve(reference(media, 'embed')) || link;
   const external =
@@ -146,9 +167,19 @@ export function createPictureWriter({
     );
     return '<a:srcRect ' + sides.join(' ') + '/>';
   }
+  function pictureReferences(o) {
+    const asset = o.kind === 'video' ? o.poster : o.asset;
+    const id = rel(R + '/image', writeAsset(asset));
+    if (!/\.svg$/i.test(asset)) return { embed: id };
+    return {
+      svg: id,
+      embed: o.fallbackAsset && rel(R + '/image', writeAsset(o.fallbackAsset)),
+    };
+  }
   function create(o, shapeId, xfrm) {
-    const isVideo = o.kind === 'video',
-      poster = rel(R + '/image', writeAsset(isVideo ? o.poster : o.asset));
+    const isVideo = o.kind === 'video';
+    const { embed, svg } = pictureReferences(o);
+    const blip = `<a:blip${embed ? ` r:embed="${embed}"` : ''}>${pictureEffectsXML(o)}${svg ? '<a:extLst>' + svgExtXML(svg) + '</a:extLst>' : ''}</a:blip>`;
     const props = isVideo ? videoProps(o) : '';
     if (isVideo) pending.add(String(shapeId));
     const link = isVideo
@@ -163,13 +194,14 @@ export function createPictureWriter({
       link +
       '</p:cNvPr><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr>' +
       props +
-      '</p:nvPr></p:nvPicPr><p:blipFill><a:blip r:embed="' +
-      poster +
-      '"/>' +
+      '</p:nvPr></p:nvPicPr><p:blipFill>' +
+      blip +
       cropXML(o.crop) +
       '<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>' +
       xfrm +
-      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>'
+      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>' +
+      (o.fill ? solid(o.fill) : '') +
+      '</p:spPr></p:pic>'
     );
   }
   function patch(n, o, old) {
@@ -186,21 +218,28 @@ export function createPictureWriter({
     }
     if (
       o.asset === old.asset &&
+      o.fallbackAsset === old.fallbackAsset &&
       o.poster === old.poster &&
       o.embed === old.embed
     )
       return;
-    const blip = desc(n, 'blip'),
+    const blip = child(child(n, 'blipFill'), 'blip'),
       isVideo = o.kind === 'video';
     if (!blip) return;
     oldMediaRefs.add(reference(blip, 'embed'));
-    blip.setAttributeNS(
-      R,
-      'r:embed',
-      rel(R + '/image', writeAsset(isVideo ? o.poster : o.asset))
-    );
-    for (const ext of children(child(blip, 'extLst'), 'ext'))
+    const { embed, svg } = pictureReferences(o);
+    if (embed) blip.setAttributeNS(R, 'r:embed', embed);
+    else blip.removeAttributeNS(R, 'embed');
+    let list = child(blip, 'extLst');
+    for (const ext of children(list, 'ext'))
       if (desc(ext, 'svgBlip') || desc(ext, 'webVideoPr')) ext.remove();
+    if (svg) {
+      if (!list) {
+        list = makeNode('<a:extLst/>');
+        blip.append(list);
+      }
+      list.append(makeNode(svgExtXML(svg)));
+    }
     if (!isVideo) return;
     const info = desc(n, 'cNvPr'),
       shapeId = attr(info, 'id'),

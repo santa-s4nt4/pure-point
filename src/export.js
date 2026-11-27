@@ -36,6 +36,7 @@ import {
 } from './xml.js';
 import { relationships } from './import.js';
 import { replaceRunText, updateText } from './text.js';
+import { hasTextFrame } from './model.js';
 import { template, slideType } from './template.js';
 
 const xfrm = (o) =>
@@ -73,6 +74,7 @@ function textBody(o) {
     (style.altLang ? ` altLang="${esc(style.altLang)}"` : '') +
     (style.kern != null ? ` kern="${Math.round(style.kern * 100)}"` : '') +
     (style.underline ? ` u="${esc(style.underline)}"` : '') +
+    (style.strike ? ` strike="${esc(style.strike)}"` : '') +
     ` spc="${Math.round((style.letterSpacing || 0) * 100)}" sz="${Math.round(style.size * 100)}" b="${Number(Boolean(style.bold))}" i="${Number(Boolean(style.italic))}"`;
   const runPaint = (style) =>
     solid(style.color) +
@@ -103,7 +105,7 @@ function textBody(o) {
 function shapeXML(o, id) {
   if (o.kind === 'line') return connectorXML(o, id, xfrm(o));
   const name = `<p:cNvPr id="${id}" name="${esc(o.name)}"/>`;
-  return `<p:sp><p:nvSpPr>${name}<p:cNvSpPr${o.kind === 'text' ? ' txBox="1"' : ''}/><p:nvPr/></p:nvSpPr><p:spPr>${xfrm(o)}${geometryXML(o)}${solid(o.fill)}${strokeXML(o)}</p:spPr>${o.kind === 'text' || o.text ? textBody(o) : ''}</p:sp>`;
+  return `<p:sp><p:nvSpPr>${name}<p:cNvSpPr${o.kind === 'text' ? ' txBox="1"' : ''}/><p:nvPr/></p:nvSpPr><p:spPr>${xfrm(o)}${geometryXML(o)}${solid(o.fill)}${strokeXML(o)}</p:spPr>${hasTextFrame(o) ? textBody(o) : ''}</p:sp>`;
 }
 const fragment = (doc, xml) =>
   doc.importNode(
@@ -380,6 +382,8 @@ function patchOriginal(n, o, old, reparented = false) {
         'eastAsianFont',
         'bold',
         'italic',
+        'underline',
+        'strike',
         'color',
         'letterSpacing',
       ].some(styleChanged)
@@ -401,6 +405,8 @@ function patchOriginal(n, o, old, reparented = false) {
         ['letterSpacing', 'spc', Math.round((style.letterSpacing || 0) * 100)],
         ['bold', 'b', +style.bold],
         ['italic', 'i', +style.italic],
+        ['underline', 'u', style.underline || 'none'],
+        ['strike', 'strike', style.strike || 'noStrike'],
       ])
         if (styleChanged(k)) rp.setAttribute(xmlKey, v);
       if (styleChanged('color'))

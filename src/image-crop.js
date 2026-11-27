@@ -1,5 +1,6 @@
 import { shapeTransform } from './layers.js';
-import { mediaURL } from './media-format.js';
+import { setImageSource } from './media-format.js';
+import { paintPicture } from './picture-effects.js';
 
 const full = [0, 0, 0, 0];
 const clamp = (n, min, max) => Math.max(min, Math.min(n, max));
@@ -18,7 +19,7 @@ export function cropFrame(image, crop) {
   return { x: center.x - w / 2, y: center.y - h / 2, w, h, crop };
 }
 
-export function chooseCrop(image, asset) {
+export function chooseCrop(image, asset, fallbackAsset) {
   const initial = image.crop || full;
   const [l, t, r, b] = initial;
   if (!asset || image.w <= 0 || image.h <= 0 || l + r >= 1 || t + b >= 1)
@@ -38,7 +39,8 @@ export function chooseCrop(image, asset) {
   const stage = dialog.querySelector('.crop-stage');
   const frame = dialog.querySelector('.crop-frame');
   const img = source.querySelector('img');
-  img.src = mediaURL(asset);
+  setImageSource(img, asset, false, fallbackAsset);
+  paintPicture(source, img, image);
   for (const [edge, label] of [
     ['nw', 'top left'],
     ['n', 'top'],

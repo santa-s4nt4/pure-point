@@ -119,13 +119,24 @@ export function editableParagraphs(root, object) {
 export function applyParagraphs(object, rows) {
   if (object.paragraphs || rows.some((p) => p.bullet)) {
     const originals = object.paragraphs || [];
-    const { font, size, bold, italic, color, letterSpacing, eastAsianFont } =
-      object;
+    const {
+      font,
+      size,
+      bold,
+      italic,
+      underline,
+      strike,
+      color,
+      letterSpacing,
+      eastAsianFont,
+    } = object;
     const standard = {
       font,
       size,
       bold,
       italic,
+      underline,
+      strike,
       color,
       letterSpacing,
       eastAsianFont,

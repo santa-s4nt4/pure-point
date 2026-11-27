@@ -101,12 +101,23 @@ export function updateText(object, text) {
       const p = original[i];
       if (!p || !p.runs.length || p.runs.some((r) => r.text.includes('\n'))) {
         const style = p || original[i - 1] || original[0] || {};
-        const { font, size, bold, italic, color, letterSpacing } = object;
+        const {
+          font,
+          size,
+          bold,
+          italic,
+          underline,
+          strike,
+          color,
+          letterSpacing,
+        } = object;
         const base = style.base || {
           font,
           size,
           bold,
           italic,
+          underline,
+          strike,
           color,
           letterSpacing,
         };

@@ -73,6 +73,36 @@ test('Text edits use the existing glyphs, stay editable through spacing changes,
   await expect(board.locator('.item[data-id]')).toHaveCount(1);
 });
 
+test('Shift H types in multiline point text and flips the object after editing', async ({
+  page,
+}, info) => {
+  await page.goto('/');
+  const art = page.locator('.artboard'),
+    input = page.getByRole('textbox', { name: 'Slide text' }),
+    frame = art.locator('.item[data-id]');
+  await art.dblclick({ position: { x: 100, y: 120 } });
+  await input.press('Enter');
+  await page.keyboard.insertText('二行目');
+  await input.press('Enter');
+  await input.press('Shift+H');
+  await expect(input).toBeFocused();
+  await input.press('Meta+Enter');
+  await expect(frame.locator('.item-text')).toHaveText('\n二行目\nH');
+  await expect(frame).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
+
+  await page.keyboard.press('Shift+h');
+  await expect(frame).toHaveCSS('transform', 'matrix(-1, 0, 0, 1, 0, 0)');
+  const download = page.waitForEvent('download');
+  await page.keyboard.press('Meta+Shift+s');
+  const path = info.outputPath('mirrored.pptx');
+  await (await download).saveAs(path);
+  const picker = page.waitForEvent('filechooser');
+  await page.keyboard.press('Meta+o');
+  await (await picker).setFiles(path);
+  await expect(frame.locator('[data-paragraph]')).toHaveText(['', '二行目', 'H']);
+  await expect(frame).toHaveCSS('transform', 'matrix(-1, 0, 0, 1, 0, 0)');
+});
+
 test('Slide layout choices create PowerPoint placeholders and reuse the selected native layout on reopen', async ({
   page,
 }) => {

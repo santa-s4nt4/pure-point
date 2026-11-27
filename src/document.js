@@ -75,7 +75,18 @@ export async function exportPDF(deck, _base, assets, name) {
     document.body.append(frame);
   });
   const doc = frame.contentDocument;
-  await Promise.all([...doc.images].map((img) => img.decode().catch(() => {})));
+  await Promise.all(
+    [...doc.images].map(async (img) => {
+      try {
+        await img.decode();
+      } catch {
+        if (img.dataset.fallbackSrc) {
+          img.src = img.dataset.fallbackSrc;
+          await img.decode().catch(() => {});
+        }
+      }
+    })
+  );
   await doc.fonts.ready;
   frame.contentWindow.addEventListener('afterprint', () => frame.remove(), {
     once: true,

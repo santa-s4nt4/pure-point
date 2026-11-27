@@ -10,6 +10,7 @@ export function workspace(action) {
     ['rect', 'Rectangle (R)'],
     ['ellipse', 'Ellipse (O)'],
     ['line', 'Line (L)'],
+    ['callout', 'Callout'],
     ['image', 'Insert image…'],
     ['video', 'Insert video…'],
     ['embed', 'Embed YouTube or Vimeo…'],

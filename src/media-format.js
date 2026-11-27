@@ -76,9 +76,20 @@ export const videoTypes = {
 // Imported native media is served from a local, tokenized URL. Newly inserted
 // images and the browser editor can still supply a data URL directly.
 export const mediaURL = (asset) => asset?.url || asset || '';
-export function setImageSource(img, asset, deferred) {
+export function setImageSource(img, asset, deferred, fallbackAsset) {
   const url = mediaURL(asset);
   if (!url) return;
+  if (fallbackAsset) {
+    img.dataset.fallbackSrc = mediaURL(fallbackAsset);
+    if (!deferred)
+      img.addEventListener(
+        'error',
+        () => {
+          img.src = img.dataset.fallbackSrc;
+        },
+        { once: true }
+      );
+  }
   if (deferred) img.dataset.printSrc = url;
   else img.src = url;
 }

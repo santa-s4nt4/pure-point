@@ -79,50 +79,90 @@ export function addSection(deck, name, ids) {
   deck.slides = rest;
   return section;
 }
-export function slideBrowser(host, { sorter = false } = {}) {
+export function slideBrowser(host, { sorter = false, prepareSlide } = {}) {
   let state,
+    layout,
+    activeId,
     selected = new Set();
   const collapsed = new Set();
+  const buttons = new Map();
+  function preview(frame, width) {
+    const slide = state.deck.slides[Number(frame.dataset.preview)];
+    prepareSlide?.(slide);
+    const node = scene(slide, state.deck, state.assets);
+    node.style.transform = `scale(${width / state.deck.w})`;
+    frame.replaceChildren(node);
+  }
   const sizes = new ResizeObserver((entries) => {
+    if (!state) return;
     for (const { target, contentRect } of entries) {
-      if (target.firstElementChild)
+      if (target.isConnected && target.firstElementChild)
         target.firstElementChild.style.transform = `scale(${contentRect.width / state.deck.w})`;
     }
   });
   const lazy = new IntersectionObserver(
     (entries) => {
+      if (!state) return;
+      const entering = [];
       for (const entry of entries) {
         const frame = entry.target;
         if (!frame.isConnected) continue;
         if (!entry.isIntersecting) {
+          sizes.unobserve(frame);
           if (frame.firstElementChild) frame.replaceChildren();
           continue;
         }
-        if (!frame.firstElementChild) {
-          const index = Number(frame.dataset.preview);
-          const s = state.deck.slides[index];
-          if (s) {
-            const n = scene(s, state.deck, state.assets);
-            n.style.transform = `scale(${frame.clientWidth / state.deck.w})`;
-            frame.append(n);
-          }
-        }
+        if (!frame.firstElementChild) entering.push(frame);
+      }
+      const widths = entering.map((frame) => frame.clientWidth);
+      for (const [i, frame] of entering.entries()) {
+        preview(frame, widths[i]);
+        sizes.observe(frame);
       }
     },
     { root: host, rootMargin: '240px' }
   );
   function highlight(index, ids) {
-    selected = new Set(ids);
-    for (const b of host.querySelectorAll('[data-slide]')) {
-      const i = Number(b.dataset.slide);
-      b.classList.toggle('active', i === index);
-      b.classList.toggle('chosen', selected.has(state.deck.slides[i].id));
-      b.setAttribute('aria-selected', selected.has(state.deck.slides[i].id));
+    const next = state.deck.slides[index].id;
+    if (activeId !== next) {
+      buttons.get(activeId)?.classList.remove('active');
+      buttons.get(next)?.classList.add('active');
+      activeId = next;
     }
+    for (const id of new Set([...selected, ...ids])) {
+      const b = buttons.get(id);
+      if (b && selected.has(id) !== ids.has(id)) {
+        b.classList.toggle('chosen', ids.has(id));
+        b.setAttribute('aria-selected', ids.has(id));
+      }
+    }
+    selected = new Set(ids);
   }
-  function render(deck, assets, index, ids) {
+  function render(deck, assets, index, ids, refreshPreview = true) {
+    const nextLayout = JSON.stringify([
+      deck.w,
+      deck.h,
+      deck.sections,
+      deck.slides.map((s) => [s.id, s.sectionId, s.hidden]),
+    ]);
+    if (
+      state?.deck === deck &&
+      state.assets === assets &&
+      layout === nextLayout
+    ) {
+      highlight(index, ids);
+      if (refreshPreview) {
+        const frame = buttons.get(activeId)?.firstElementChild;
+        if (frame?.firstElementChild) preview(frame, frame.clientWidth);
+      }
+      return;
+    }
     const scroll = host.scrollTop;
     state = { deck, assets };
+    layout = nextLayout;
+    activeId = null;
+    selected.clear();
+    buttons.clear();
     sizes.disconnect();
     lazy.disconnect();
     host.replaceChildren();
@@ -153,8 +193,10 @@ export function slideBrowser(host, { sorter = false } = {}) {
           b = el('button', 'select-slide');
         b.type = 'button';
         b.dataset.slide = i;
+        buttons.set(s.id, b);
         b.title = 'Slide ' + (i + 1) + (s.hidden ? ' · Hidden' : '');
         b.setAttribute('aria-label', b.title);
+        b.setAttribute('aria-selected', 'false');
         b.draggable = true;
         const frame = el('div', 'thumb-frame');
         frame.style.aspectRatio = deck.w + '/' + deck.h;
@@ -171,7 +213,6 @@ export function slideBrowser(host, { sorter = false } = {}) {
         hide.setAttribute('aria-label', hide.title);
         tile.append(hide);
         cards.append(tile);
-        sizes.observe(frame);
         lazy.observe(frame);
       }
       host.append(cards);
@@ -212,6 +253,7 @@ export function slideBrowser(host, { sorter = false } = {}) {
           left: i * 5 + 'px',
           top: i * 5 + 'px',
         });
+        prepareSlide?.(cards[i]);
         const content = scene(cards[i], deck, assets);
         content.style.transform = `scale(${width / deck.w})`;
         card.append(content);
@@ -237,18 +279,24 @@ export function slideBrowser(host, { sorter = false } = {}) {
       requestAnimationFrame(() => preview.remove());
     },
     toggleSection(id) {
+      layout = null;
       id = id || null;
       if (collapsed.has(id)) collapsed.delete(id);
       else collapsed.add(id);
     },
     clear() {
+      state = null;
+      layout = null;
+      activeId = null;
+      selected.clear();
+      buttons.clear();
       collapsed.clear();
       sizes.disconnect();
       lazy.disconnect();
       host.replaceChildren();
     },
     reveal(s) {
-      collapsed.delete(s.sectionId || null);
+      if (collapsed.delete(s.sectionId || null)) layout = null;
     },
   };
 }

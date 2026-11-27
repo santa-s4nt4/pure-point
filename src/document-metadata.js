@@ -42,13 +42,11 @@ function extension(root, uri) {
     append(list, P, 'p:ext', { uri })
   );
 }
-function relationshipNodes(xml, part) {
-  return xml[relfile(part)]
-    ? children(parse(xml[relfile(part)]).documentElement)
-    : [];
+function relationshipNodes(xml, part, doc = (p) => xml[p] && parse(xml[p])) {
+  return children(doc(relfile(part))?.documentElement);
 }
-function commentParts(xml, owner) {
-  return relationshipNodes(xml, owner)
+function commentParts(xml, owner, doc) {
+  return relationshipNodes(xml, owner, doc)
     .filter(
       (n) =>
         attr(n, 'Type').endsWith('/comments') &&
@@ -56,9 +54,9 @@ function commentParts(xml, owner) {
     )
     .map((n) => resolve(owner, attr(n, 'Target')));
 }
-function authorPart(xml, presPath, modern) {
+function authorPart(xml, presPath, modern, doc) {
   const type = modern ? REVIEW + 'authors' : R + '/commentAuthors';
-  const rel = relationshipNodes(xml, presPath).find(
+  const rel = relationshipNodes(xml, presPath, doc).find(
     (n) => attr(n, 'Type') === type
   );
   return rel && resolve(presPath, attr(rel, 'Target'));
@@ -93,7 +91,7 @@ export function readDocumentMetadata(deck, xml, presPath, doc) {
   });
   const authors = new Map();
   for (const modern of [false, true]) {
-    const path = authorPart(xml, presPath, modern);
+    const path = authorPart(xml, presPath, modern, doc);
     if (path && xml[path]) {
       for (const author of children(doc(path).documentElement))
         authors.set(attr(author, 'id'), attr(author, 'name'));
@@ -101,12 +99,9 @@ export function readDocumentMetadata(deck, xml, presPath, doc) {
   }
   for (const s of deck.slides) {
     s.sectionId ??= null;
-    s.hidden = ['0', 'false'].includes(
-      attr(doc(s.source).documentElement, 'show')
-    );
     s.comments = [];
     let byOfficeId;
-    for (const path of commentParts(xml, s.source)) {
+    for (const path of commentParts(xml, s.source, doc)) {
       if (!xml[path]) continue;
       const cm = doc(path).documentElement,
         modern = cm.namespaceURI === MODERN,

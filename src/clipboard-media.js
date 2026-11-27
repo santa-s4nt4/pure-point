@@ -7,6 +7,7 @@ function mediaReferences(items, visit) {
   for (const item of items) {
     if (item.kind === 'image' || item.kind === 'video') {
       if (item.asset) visit(item, 'asset');
+      if (item.fallbackAsset) visit(item, 'fallbackAsset');
       if (item.kind === 'video' && item.poster) visit(item, 'poster');
     }
     if (item.items) mediaReferences(item.items, visit);

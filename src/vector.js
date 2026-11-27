@@ -1,10 +1,12 @@
 import { blue, shape } from './model.js';
 import { shapeTransform } from './layers.js';
+import { presetContour } from './shape-presets.js';
 
 export const vectorKinds = new Set([
   'rect',
   'roundRect',
   'triangle',
+  'callout',
   'ellipse',
   'line',
   'path',
@@ -51,30 +53,8 @@ export function contoursFor(o) {
       },
     ];
   }
-  if (o.kind === 'roundRect') {
-    const radius = Math.min(o.w, o.h) * 0.13,
-      rx = (radius / (o.w || 1)) * 1000,
-      ry = (radius / (o.h || 1)) * 1000;
-    const nodes = pairs([
-      [rx, 0],
-      [1000 - rx, 0],
-      [1000, ry],
-      [1000, 1000 - ry],
-      [1000 - rx, 1000],
-      [rx, 1000],
-      [0, 1000 - ry],
-      [0, ry],
-    ]);
-    nodes[1].out = node(1000 - rx + K * rx, 0);
-    nodes[2].in = node(1000, ry - K * ry);
-    nodes[3].out = node(1000, 1000 - ry + K * ry);
-    nodes[4].in = node(1000 - rx + K * rx, 1000);
-    nodes[5].out = node(rx - K * rx, 1000);
-    nodes[6].in = node(0, 1000 - ry + K * ry);
-    nodes[7].out = node(0, ry - K * ry);
-    nodes[0].in = node(rx - K * rx, 0);
-    return [{ closed: true, nodes }];
-  }
+  if (['rect', 'roundRect', 'callout'].includes(o.kind))
+    return [presetContour(o)];
   if (o.kind === 'line')
     return [
       {
@@ -147,12 +127,25 @@ export function pathData(c, w, h) {
 export function createAt(kind, start) {
   return shape(
     kind,
-    { rect: 'Rectangle', ellipse: 'Ellipse', line: 'Line' }[kind],
+    { rect: 'Rectangle', ellipse: 'Ellipse', line: 'Line', callout: 'Callout' }[
+      kind
+    ],
     start.x,
     start.y,
     0,
     0,
-    kind === 'line' ? { stroke: '#222521', strokeWidth: 1.5 } : { fill: blue }
+    kind === 'line'
+      ? { stroke: '#222521', strokeWidth: 1.5 }
+      : kind === 'callout'
+        ? {
+            fill: blue,
+            calloutShape: 'ellipse',
+            color: '#FFFFFF',
+            align: 'center',
+            valign: 'middle',
+            inset: [6, 3, 6, 3],
+          }
+        : { fill: blue }
   );
 }
 export function sizeDraft(o, start, end, constrain) {
@@ -202,10 +195,16 @@ export const localContours = (o) =>
 // new bounding rectangle. The shape can be flipped, rotated or inside a group.
 export function applyContours(o, original, local) {
   const transform = shapeTransform(original);
-  if (o.kind === 'line' && local.length === 1 && local[0].nodes.length === 2) {
+  if (
+    o.kind === 'line' &&
+    local.length === 1 &&
+    local[0].nodes.length === 2 &&
+    !curved(...local[0].nodes)
+  ) {
     const ends = local[0].nodes.map((p) => transform.transformPoint(p));
     o.rotation = 0;
     sizeDraft(o, ends[0], ends[1], false);
+    delete o.contours;
     return;
   }
   const all = local.flatMap((c) =>
@@ -219,7 +218,7 @@ export function applyContours(o, original, local) {
     h = Math.max(...ys) - top;
   const center = transform.transformPoint({ x: left + w / 2, y: top + h / 2 });
   Object.assign(o, {
-    kind: 'path',
+    kind: o.kind === 'line' ? 'line' : 'path',
     x: center.x - w / 2,
     y: center.y - h / 2,
     w,
@@ -232,11 +231,108 @@ export function applyContours(o, original, local) {
   });
   delete o.paths;
 }
-export function moveVertex(o, initial, key, point) {
+
+// At an interior anchor the angle bisector of the adjacent segments gives
+// both handles the same tangent. Endpoints bend toward the same side of a line.
+function direction(a, b) {
+  if (!a || !b) return;
+  const x = b.x - a.x,
+    y = b.y - a.y,
+    length = Math.hypot(x, y);
+  return length ? { x: x / length, y: y / length, length } : undefined;
+}
+function curveHandles(contours, selected) {
+  const handles = [];
+  contours.forEach((contour, path) => {
+    if (contour.closed || (selected && selected.path !== path)) return;
+    contour.nodes.forEach((anchor, i, nodes) => {
+      if (selected && selected.vertex !== i) return;
+      const incoming = direction(nodes[i - 1], anchor);
+      const outgoing = direction(anchor, nodes[i + 1]);
+      if (!incoming && !outgoing) return;
+      let x = (incoming?.x || 0) + (outgoing?.x || 0);
+      let y = (incoming?.y || 0) + (outgoing?.y || 0);
+      if (Math.hypot(x, y) < 1e-8) ({ x, y } = outgoing);
+      const tangent = Math.atan2(y, x);
+      if (outgoing)
+        handles.push({
+          anchor,
+          arm: 'out',
+          reference: tangent,
+          sign: 1,
+          length: outgoing.length,
+        });
+      if (incoming)
+        handles.push({
+          anchor,
+          arm: 'in',
+          reference: tangent + Math.PI,
+          sign: outgoing ? 1 : -1,
+          length: incoming.length,
+        });
+    });
+  });
+  return handles;
+}
+export function curveSettings(o, selected) {
+  const handles = curveHandles(localContours(o), selected);
+  if (!handles.length) return;
+  const values = handles.map(({ anchor, arm, reference, sign }) => {
+    const p = direction(anchor, anchor[arm]);
+    if (!p) return 0;
+    const offset = Math.atan2(p.y, p.x) - reference;
+    const radians = Math.atan2(Math.sin(offset), Math.cos(offset));
+    return Math.round((radians * sign * 2000) / Math.PI) / 10;
+  });
+  return {
+    curved: handles.some(({ anchor, arm }) => anchor[arm]),
+    percent: values.every((n) => n === values[0]) ? values[0] : null,
+  };
+}
+export function setCurvature(o, selected, percent) {
+  if (percent !== null && !Number.isFinite(percent)) return;
+  const radians = (Math.min(200, Math.max(-200, percent)) * Math.PI) / 200;
+  const contours = localContours(o);
+  for (const { anchor, arm, reference, sign, length } of curveHandles(
+    contours,
+    selected
+  )) {
+    if (percent === null) {
+      delete anchor[arm];
+      continue;
+    }
+    const angle = reference + sign * radians;
+    const radius = direction(anchor, anchor[arm])?.length || length / 3;
+    anchor[arm] = node(
+      anchor.x + radius * Math.cos(angle),
+      anchor.y + radius * Math.sin(angle)
+    );
+  }
+  applyContours(o, o, contours);
+}
+export function moveVertex(o, initial, key, point, independent = false) {
   const local = localContours(initial),
     n = local[key.path].nodes[key.vertex];
-  if (key.arm) n[key.arm] = point;
-  else {
+  if (key.arm) {
+    const other = key.arm === 'in' ? 'out' : 'in';
+    const old = direction(n, n[key.arm]),
+      opposite = direction(n, n[other]);
+    const next = direction(n, point);
+    // Opposed handles identify a smooth join, including imported paths.
+    // Keep the other handle's length when rotating it with the pointer.
+    if (
+      !independent &&
+      old &&
+      opposite &&
+      next &&
+      Math.hypot(old.x + opposite.x, old.y + opposite.y) < 0.0001
+    )
+      n[other] = node(
+        n.x - next.x * opposite.length,
+        n.y - next.y * opposite.length
+      );
+    n[key.arm] = point;
+  } else {
     for (const arm of ['in', 'out'])
       if (n[arm]) {
         n[arm].x += point.x - n.x;

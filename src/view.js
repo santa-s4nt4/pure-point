@@ -1,7 +1,10 @@
+import { hasTextFrame } from './model.js';
+import { presetTextInset } from './shape-presets.js';
 import { bulletList } from './bullets.js';
 import {
   appendTextRun,
   decorateRun,
+  isDecorated,
   japaneseSubstitute,
   startsEastAsian,
 } from './text-runs.js';
@@ -34,6 +37,8 @@ import {
   Circle,
   Copy,
   ClipboardPaste,
+  Crop,
+  FlipHorizontal2,
   ImagePlus,
   Undo2,
   Redo2,
@@ -60,6 +65,9 @@ import {
   AlignRight,
   Bold,
   Italic,
+  Underline,
+  Strikethrough,
+  MessageCircle,
   PanelLeft,
   SlidersHorizontal,
   Box,
@@ -82,11 +90,14 @@ import {
 } from 'lucide';
 import { videoNode } from './media-player.js';
 import { setImageSource } from './media-format.js';
+import { paintPicture } from './picture-effects.js';
 import { tableNode } from './table.js';
 import { gridLines } from './grid.js';
 const icons = {
   copy: Copy,
   paste: ClipboardPaste,
+  crop: Crop,
+  flipHorizontal: FlipHorizontal2,
   pointer: MousePointer2,
   line: Slash,
   objectleft: AlignStartVertical,
@@ -131,6 +142,9 @@ const icons = {
   alignright: AlignRight,
   bold: Bold,
   italic: Italic,
+  underline: Underline,
+  strike: Strikethrough,
+  callout: MessageCircle,
   sidebar: PanelLeft,
   settings: SlidersHorizontal,
   path: Box,
@@ -210,7 +224,7 @@ export function itemNode(o, assets, interactive = false, deferImages = false) {
     const clip = el('div', 'image-clip'),
       img = el('img');
     img.draggable = false;
-    setImageSource(img, assets[o.asset], deferImages);
+    setImageSource(img, assets[o.asset], deferImages, assets[o.fallbackAsset]);
     const [l, t, r, b] = o.crop || [0, 0, 0, 0],
       w = 1 / Math.max(0.001, 1 - l - r),
       h = 1 / Math.max(0.001, 1 - t - b);
@@ -220,6 +234,7 @@ export function itemNode(o, assets, interactive = false, deferImages = false) {
       left: -l * w * 100 + '%',
       top: -t * h * 100 + '%',
     });
+    paintPicture(clip, img, o);
     clip.append(img);
     n.append(clip);
   } else if (o.kind === 'group') {
@@ -238,7 +253,7 @@ export function itemNode(o, assets, interactive = false, deferImages = false) {
     n.append(ph);
   } else if (o.kind !== 'text' || o.fill || o.stroke)
     n.append(vectorDrawing(o, interactive === true));
-  if (o.text || o.kind === 'text') {
+  if (hasTextFrame(o)) {
     const text = el('div', 'item-text');
     typeStyle(text, o, japaneseSubstitute(o));
     text.style.setProperty(
@@ -250,8 +265,9 @@ export function itemNode(o, assets, interactive = false, deferImages = false) {
       lineAdvance(o.lineHeight, o.size) + 'px'
     );
     const [l, t, r, b] = o.inset;
+    const [dx, dy] = presetTextInset(o);
     Object.assign(text.style, {
-      padding: `${t}px ${r}px ${b}px ${l}px`,
+      padding: `${t + dy}px ${r + dx}px ${b + dy}px ${l + dx}px`,
       justifyContent:
         { middle: 'center', bottom: 'flex-end' }[o.valign] || 'flex-start',
       textAlign: o.align,
@@ -318,7 +334,8 @@ export function itemNode(o, assets, interactive = false, deferImages = false) {
           if (
             interactive === true &&
             (p.base.highlight ||
-              (p.base.underline && p.base.underline !== 'none'))
+              isDecorated(p.base, 'underline') ||
+              isDecorated(p.base, 'strike'))
           ) {
             // Keep the paragraph mark's insertion style on an inline box.
             // An empty box has no background area until the first glyph arrives.
@@ -336,6 +353,7 @@ export function itemNode(o, assets, interactive = false, deferImages = false) {
       }
     } else {
       const body = el('div');
+      decorateRun(text, o);
       body.textContent = o.text;
       body.style.minHeight =
         o.text.split('\n').length * lineAdvance(o.lineHeight, o.size) + 'px';

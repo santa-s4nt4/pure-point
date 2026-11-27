@@ -13,11 +13,22 @@ export const esc = (v) =>
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;');
-export const children = (n, k) =>
-  [...(n?.children || [])].filter((e) => !k || e.localName === k);
-export const child = (n, k) => children(n, k)[0];
+export const children = (n, k) => {
+  if (!n) return [];
+  const result = [];
+  for (let e = n.firstElementChild; e; e = e.nextElementSibling) {
+    if (!k || e.localName === k) result.push(e);
+  }
+  return result;
+};
+export const child = (n, k) => {
+  for (let e = n?.firstElementChild; e; e = e.nextElementSibling)
+    if (!k || e.localName === k) return e;
+};
 export const desc = (n, k) => n?.getElementsByTagNameNS('*', k)[0];
 export const attr = (n, k, d = '') => n?.getAttribute(k) ?? d;
+export const percent = (value) =>
+  value.endsWith('%') ? parseFloat(value) / 100 : Number(value) / 100000;
 export const rid = (n) => n?.getAttributeNS(R, 'id') || attr(n, 'r:id');
 const strictBase = 'http://purl.oclc.org/ooxml/';
 const namespacePairs = [

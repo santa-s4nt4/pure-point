@@ -26,6 +26,8 @@ export function shape(kind, name, x, y, w, h, props = {}) {
     ...props,
   };
 }
+export const hasTextFrame = (o) =>
+  o.kind === 'text' || o.kind === 'callout' || Boolean(o.text);
 export const textItem = (text, x, y, w, h, size, props = {}) =>
   shape('text', text.slice(0, 40), x, y, w, h, { text, size, ...props });
 export function slide(name = '', bg = '#FFFFFF', items = []) {

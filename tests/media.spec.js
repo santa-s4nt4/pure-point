@@ -145,7 +145,8 @@ test('Crop an imported image, reopen the crop, and replace its source through De
   await pick(page, () => menu(page, 'open'), first);
   await expect(frame).not.toHaveAttribute('data-id', oldId);
   const originalBox = await frame.boundingBox();
-  await frame.dblclick();
+  await frame.click();
+  await page.getByRole('button', { name: 'Crop image…' }).click();
   const crop = page.getByRole('dialog', { name: 'Crop image' });
   const leftEdge = crop.getByRole('button', { name: 'Crop left', exact: true });
   const handle = await leftEdge.boundingBox();
@@ -189,7 +190,8 @@ test('Crop an imported image, reopen the crop, and replace its source through De
   await expect(
     page.getByRole('menuitem', { name: 'Replace image…' })
   ).toBeVisible();
-  await page.keyboard.press('Escape');
+  await page.getByRole('menuitem', { name: 'Crop image…' }).click();
+  await crop.getByRole('button', { name: 'Cancel' }).click();
   await pick(
     page,
     () => page.locator('#properties [data-action=replaceMedia]').click(),
@@ -309,6 +311,8 @@ test('Slide copies keep cropped media and comment anchors after the original is 
     const picture = shape('image', 'Cropped picture', 60, 30, 50, 50, {
       asset,
       crop: [0.15, 0.1, 0.35, 0],
+      fill: '#F2F2F2',
+      pictureEffects: [{ bright: 0.7, contrast: -0.7 }, { alpha: 0.75 }],
     });
     const source = fixture.slides[0];
     source.items.push(picture);
@@ -356,6 +360,8 @@ test('Slide copies keep cropped media and comment anchors after the original is 
       const image = reopened.items[0];
       return {
         crop: image.crop,
+        fill: image.fill,
+        effects: image.pictureEffects,
         matches: destAssets[image.asset] === assets[asset],
         independent: reopened.comments[0].id !== original.comments[0].id,
         anchored: reopened.comments[0].objectId === image.id,
@@ -365,8 +371,191 @@ test('Slide copies keep cropped media and comment anchors after the original is 
   for (const result of results)
     expect(result).toEqual({
       crop: [0.15, 0.1, 0.35, 0],
+      fill: '#F2F2F2',
+      effects: [{ bright: 0.7, contrast: -0.7 }, { alpha: 0.75 }],
       matches: true,
       independent: true,
       anchored: true,
     });
+});
+
+test('DrawingML picture effects change the pixels while leaving the frame fill visible', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.evaluate(async () => {
+    const { shape } = await import('/src/model.js');
+    const { itemNode } = await import('/src/view.js');
+    const { readPictureEffects } = await import('/src/picture-effects.js');
+    const { parse, ns } = await import('/src/xml.js');
+    const bitmap = document.createElement('canvas');
+    bitmap.width = 20;
+    bitmap.height = 20;
+    bitmap.getContext('2d').fillRect(0, 0, 10, 20);
+    const assets = { picture: bitmap.toDataURL() };
+    const sample = document.createElement('div');
+    sample.id = 'picture-probe';
+    sample.style.cssText =
+      'position:fixed;top:0;left:0;width:40px;height:20px;z-index:9999;background:white';
+    [
+      '<a:alphaModFix amt="10%"/>',
+      '<a:lum bright="70000" contrast="-70000"/><a:alphaModFix/>',
+    ].forEach((markup, i) => {
+      const o = shape('image', 'Probe', i * 20, 0, 20, 20, {
+        asset: 'picture', fill: i ? '#FF0000' : '#FFFFFF',
+      });
+      const blip = parse('<a:blip ' + ns + '>' + markup + '</a:blip>').documentElement;
+      readPictureEffects(blip, o);
+      sample.append(itemNode(o, assets));
+    });
+    document.body.append(sample);
+    await Promise.all(
+      [...sample.querySelectorAll('img')].map((img) => img.decode())
+    );
+  });
+  const shot = await page.locator('#picture-probe').screenshot();
+  const pixels = await page.evaluate(async (base64) => {
+    const img = new Image();
+    img.src = 'data:image/png;base64,' + base64;
+    await img.decode();
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.drawImage(img, 0, 0, 40, 20);
+    return [5, 15, 25, 35].map((x) =>
+      [...ctx.getImageData(x, 10, 1, 1).data].slice(0, 3)
+    );
+  }, shot.toString('base64'));
+  // Black at 10% over white, untouched white, Office washout, transparent over red.
+  for (const [i, expected] of [230, 255, 205].entries())
+    for (const channel of pixels[i])
+      expect(Math.abs(channel - expected)).toBeLessThanOrEqual(1);
+  expect(pixels[3]).toEqual([255, 0, 0]);
+});
+
+test('PowerPoint SVG pictures resolve extension-only and dual embeds and survive copying and replacement', async ({
+  page,
+}) => {
+  await page.goto('/icon.png');
+  const result = await page.evaluate(async (png) => {
+    const { blankDeck, shape } = await import('/src/model.js');
+    const { exportDeck } = await import('/src/export.js');
+    const { importDeck } = await import('/src/import.js');
+    const { itemNode } = await import('/src/view.js');
+    const { captureClipboardMedia, pasteClipboardMedia } =
+      await import('/src/clipboard-media.js');
+    const { parse, R, serialize, relfile, PKG } = await import('/src/xml.js');
+    const bitmap = 'ppt/media/preview.png',
+      svg = 'ppt/media/drawing.svg';
+    const media = {
+      [bitmap]: 'data:image/png;base64,' + png,
+      [svg]:
+        'data:image/svg+xml;base64,' +
+        btoa(
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 20"><path fill="red" d="M0 0h40v20H0z"/></svg>'
+        ),
+    };
+    const deck = blankDeck();
+    deck.slides[0].items = [0, 1, 2].map((i) =>
+      shape('image', 'Picture ' + i, i * 100, 15, 80, 40, {
+        asset: bitmap,
+        crop: [0.15, 0, 0, 0],
+      })
+    );
+    const parts = exportDeck(deck, null, media);
+    parts.media = { ...media };
+    const path = 'ppt/slides/slide1.xml',
+      rels = relfile(path);
+    const relDoc = parse(parts.xml[rels]);
+    const relation = relDoc.createElementNS(PKG, 'Relationship');
+    relation.setAttribute('Id', 'rIdSVG');
+    relation.setAttribute('Type', R + '/image');
+    relation.setAttribute('Target', '../media/drawing.svg');
+    relDoc.documentElement.append(relation);
+    parts.xml[rels] = serialize(relDoc);
+    const doc = parse(parts.xml[path]);
+    const blips = [...doc.getElementsByTagNameNS('*', 'blip')];
+    blips[0].removeAttributeNS(R, 'embed');
+    blips.forEach((blip, i) => {
+      const extension = parse(
+        `<a:extLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="${R}"><a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}"><v:svgBlip xmlns:v="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="${i === 2 ? 'missing' : 'rIdSVG'}"/></a:ext></a:extLst>`
+      );
+      blip.append(doc.importNode(extension.documentElement, true));
+    });
+    parts.xml[path] = serialize(doc);
+    const file = importDeck(parts);
+    const items = file.deck.slides[0].items;
+    const selections = items.map((o) => [
+      o.kind,
+      o.asset,
+      o.fallbackAsset ?? null,
+      o.crop[0],
+    ]);
+    const img = itemNode(items[0], media).querySelector('img');
+    await img.decode();
+    const canvas = document.createElement('canvas'),
+      ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, 10, 10);
+    const pixel = [...ctx.getImageData(5, 5, 1, 1).data];
+    const invalid = itemNode(items[1], {
+      ...media,
+      [svg]: 'data:image/svg+xml,broken',
+    }).querySelector('img');
+    await new Promise((resolve, reject) => {
+      invalid.onload = resolve;
+      setTimeout(() => reject(Error('Raster fallback did not load')), 3000);
+    });
+    const base = { ...file, parts, deck: structuredClone(file.deck) };
+    const dest = blankDeck(),
+      destMedia = {};
+    const copies = structuredClone(items.slice(0, 2));
+    pasteClipboardMedia(
+      copies,
+      captureClipboardMedia(copies, media),
+      destMedia
+    );
+    dest.slides[0].items = copies;
+    const copied = exportDeck(dest, null, destMedia);
+    const reopened = importDeck({ xml: copied.xml, media: destMedia }).deck
+      .slides[0].items;
+    const refs = [
+      ...parse(copied.xml[path]).getElementsByTagNameNS('*', 'blip'),
+    ].map((b) => [
+      b.hasAttributeNS(R, 'embed'),
+      Boolean(b.getElementsByTagNameNS('*', 'svgBlip').length),
+    ]);
+    items[0].asset = bitmap;
+    const changes = exportDeck(file.deck, base, media);
+    return {
+      selections,
+      pixel,
+      fellBack: invalid.src === media[bitmap],
+      refs,
+      reopened: reopened.map((o) => [
+        destMedia[o.asset] === media[svg],
+        !!o.fallbackAsset,
+      ]),
+      replaced: parse(changes.xml[path])
+        .getElementsByTagNameNS('*', 'blip')[0]
+        .getElementsByTagNameNS('*', 'svgBlip').length,
+      sharedSVGKept: !changes.removed?.includes(svg),
+    };
+  }, picture.buffer.toString('base64'));
+  expect(result).toEqual({
+    selections: [
+      ['image', 'ppt/media/drawing.svg', null, 0.15],
+      ['image', 'ppt/media/drawing.svg', 'ppt/media/preview.png', 0.15],
+      ['image', 'ppt/media/preview.png', null, 0.15],
+    ],
+    pixel: [255, 0, 0, 255],
+    fellBack: true,
+    refs: [
+      [false, true],
+      [true, true],
+    ],
+    reopened: [
+      [true, false],
+      [true, true],
+    ],
+    replaced: 0,
+    sharedSVGKept: true,
+  });
 });

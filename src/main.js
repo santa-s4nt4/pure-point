@@ -4,6 +4,7 @@ import {
   createAt,
   sizeDraft,
   moveVertex,
+  setCurvature,
   splitEdge,
   deleteVertex,
   resizeDimensions,
@@ -12,6 +13,7 @@ import {
 import {
   appendVertexOverlay,
   strokePanel,
+  shapePanel,
   vectorDrawing,
 } from './vector-view.js';
 import { anchorAt, refreshCommentPositions } from './comment-anchors.js';
@@ -63,9 +65,9 @@ import { defaultTextSize, measureTextElement, singleLine } from './text.js';
 import { layoutOptions } from './slide-layouts.js';
 import { chooseLayout } from './layout-picker.js';
 import { inlineText } from './inline-text.js';
-import { blankDeck, slide, textItem, uid } from './model.js';
+import { blankDeck, hasTextFrame, slide, textItem, uid } from './model.js';
 import { importDeck } from './import.js';
-import { japaneseSubstitute, runFontFor } from './text-runs.js';
+import { japaneseSubstitute, objectDecoration, runFontFor } from './text-runs.js';
 import { exportDeck } from './export.js';
 import { defaults, snapAxis, snapTargets } from './grid.js';
 import { el, gridOverlay, icon, itemNode, scene } from './view.js';
@@ -133,8 +135,11 @@ let tileWidth = 216,
   pinPosition = null,
   pinning = false,
   focusComment = null;
-const railSlides = slideBrowser($('.thumbs')),
-  overviewSlides = slideBrowser($('.sorter'), { sorter: true });
+const railSlides = slideBrowser($('.thumbs'), { prepareSlide: loadSlideFonts }),
+  overviewSlides = slideBrowser($('.sorter'), {
+    sorter: true,
+    prepareSlide: loadSlideFonts,
+  });
 animateLogo($('#floating-p'));
 bindRailResize($('.rail-resizer'));
 for (const [action, panel] of [
@@ -374,10 +379,11 @@ function status() {
     .forEach((b) => (b.disabled = !future.length));
   platform.setTitle(fileTitle() + (dirty ? ' •' : '') + ' — pure-point');
 }
-function renderThumbs() {
+function renderThumbs(refreshPreview = true) {
   $('.head-count').textContent = deck.slides.length;
-  railSlides.render(deck, assets, index, slideIds());
-  if (overview) overviewSlides.render(deck, assets, index, slideIds());
+  railSlides.render(deck, assets, index, slideIds(), refreshPreview);
+  if (overview)
+    overviewSlides.render(deck, assets, index, slideIds(), refreshPreview);
 }
 function setOverview(on) {
   finishText();
@@ -603,6 +609,20 @@ function selectedEntries(entries = layerEntries(active().items)) {
       .filter(Boolean)
   );
 }
+// Pick the group as a unit unless the user is working inside that group.
+function canvasEntry(all, id, deep) {
+  let hit = all.get(id);
+  if (!hit || deep) return hit;
+  const last = all.get(selection);
+  const ids = selectedIds();
+  while (
+    hit.parent &&
+    !ids.includes(hit.object.id) &&
+    hit.parent.object.id !== last?.parent?.object.id
+  )
+    hit = hit.parent;
+  return hit;
+}
 function canGroup(entries) {
   return entries.length > 1 && entries.every((e) => !e.locked);
 }
@@ -666,6 +686,7 @@ function drawSelection() {
   sc.append(layer);
 }
 function renderBoard() {
+  loadSlideFonts(active());
   const sc = scene(active(), deck, assets, true);
   if (grid.visible) sc.append(gridOverlay(deck, grid));
   $('.artboard').replaceChildren(sc);
@@ -843,6 +864,26 @@ function gridPanel() {
     )
   );
 }
+const textActions = {
+  bold: 'Bold',
+  italic: 'Italic',
+  underline: 'Underline',
+  strike: 'Strikethrough',
+  alignleft: 'Align left',
+  aligncenter: 'Align center',
+  alignright: 'Align right',
+};
+function textButtons(o) {
+  return Object.entries(textActions)
+    .map(([key, label]) => {
+      const pressed =
+        key === 'underline' || key === 'strike'
+          ? objectDecoration(o, key)
+          : Boolean(o[key] || 'align' + o.align === key);
+      return `<button type="button" class="icon-btn${pressed ? ' on' : ''}" data-action="${key}" aria-label="${label}" title="${label}" aria-pressed="${pressed}">${icon(key)}</button>`;
+    })
+    .join('');
+}
 function properties() {
   const o = selected(),
     container = $('#properties');
@@ -948,7 +989,8 @@ function properties() {
       `${alignControls()}<div class="form-grid">${fields}</div>`,
       action('delete', 'Delete object', 'delete')
     );
-    if (o.kind === 'text' || o.text) {
+    html += shapePanel(o, { section, field });
+    if (hasTextFrame(o)) {
       const displayedFont = runFontFor(o.text, o);
       const families = [...new Set(fonts.map((f) => f.family))],
         face = fonts.find(
@@ -995,21 +1037,21 @@ function properties() {
         '</select></label>';
       html += section(
         'Text',
-        `<div class="form-grid"><label class="field wide">Font family<select data-font="family" aria-label="Font family">${families.map((f) => `<option${f === family ? ' selected' : ''}>${esc(f)}</option>`).join('')}</select></label><label class="field">Style<select data-font="face" aria-label="Style">${members.map((f) => `<option value="${esc(f.full)}"${f.style === style ? ' selected' : ''}>${esc(f.style)}</option>`).join('')}</select></label>${field('Size (pt)', 'size', o.size, 1, 4000)}${field('Letter spacing (pt)', 'letterSpacing', o.letterSpacing || 0, -40, 40)}${lineSelect}</div><div class="segmented">${['bold', 'italic', 'alignleft', 'aligncenter', 'alignright'].map((k, i) => action(k, ['Bold', 'Italic', 'Align left', 'Align center', 'Align right'][i], k, 'icon-btn ' + (o[k] || 'align' + o.align === k ? 'on' : ''))).join('')}</div>${swatch('Text color', o.color, 'color')}`
+        `<div class="form-grid"><label class="field wide">Font family<select data-font="family" aria-label="Font family">${families.map((f) => `<option${f === family ? ' selected' : ''}>${esc(f)}</option>`).join('')}</select></label><label class="field">Style<select data-font="face" aria-label="Style">${members.map((f) => `<option value="${esc(f.full)}"${f.style === style ? ' selected' : ''}>${esc(f.style)}</option>`).join('')}</select></label>${field('Size (pt)', 'size', o.size, 1, 4000)}${field('Letter spacing (pt)', 'letterSpacing', o.letterSpacing || 0, -40, 40)}${lineSelect}</div><div class="segmented">${textButtons(o)}</div>${swatch('Text color', o.color, 'color')}`
       );
     }
     if (
-      ['rect', 'ellipse', 'triangle', 'roundRect', 'path', 'text'].includes(
+      ['rect', 'ellipse', 'triangle', 'roundRect', 'callout', 'path', 'text'].includes(
         o.kind
       )
     )
       html += section('Appearance', swatch('Fill', o.fill, 'fill'));
     if (vectorKinds.has(o.kind))
-      html += strokePanel(o, { section, field, swatch });
+      html += strokePanel(o, { section, field, swatch }, vectorEdit?.selected);
     if (o.kind === 'image')
       html += section(
         'Image',
-        '<div class="layer-set"><button data-action="replaceMedia">Replace image…</button></div>'
+        '<div class="layer-set"><button data-action="cropImage">Crop image…</button><button data-action="replaceMedia">Replace image…</button></div>'
       );
     if (o.kind === 'unsupported')
       html += section(
@@ -1019,15 +1061,15 @@ function properties() {
     container.innerHTML = html + gridPanel();
   }
 }
-function render() {
+function render(refreshPreview = true) {
   updateChrome();
-  renderThumbs();
+  renderThumbs(refreshPreview);
   renderBoard();
   properties();
   status();
-  loadFonts();
 }
-function loadFonts() {
+function loadSlideFonts(slide) {
+  if (!platform.native || !fonts.length) return;
   const names = new Map();
   function collect(o) {
     if (!o) return;
@@ -1052,7 +1094,7 @@ function loadFonts() {
     p.runs.forEach(collect);
   }
   function visit(o) {
-    if (o.text || o.kind === 'text') {
+    if (hasTextFrame(o)) {
       collect(o);
       o.paragraphs?.forEach(paragraph);
     }
@@ -1060,10 +1102,8 @@ function loadFonts() {
       for (const cell of row.cells) cell.paragraphs.forEach(paragraph);
     o.items?.forEach(visit);
   }
-  for (const s of deck.slides) {
-    s.items.forEach(visit);
-    s.back.forEach(visit);
-  }
+  slide.items.forEach(visit);
+  slide.back.forEach(visit);
   for (const [font, bold, italic] of names.values())
     platform.loadTypeface(font, fonts, bold, italic);
 }
@@ -1089,6 +1129,8 @@ function updateObject(key, value) {
     'color',
     'bold',
     'italic',
+    'underline',
+    'strike',
     'letterSpacing',
   ].includes(key);
   const paragraphStyle = key === 'align' || key === 'lineHeight';
@@ -1165,7 +1207,7 @@ function switchSlide(i) {
   railSlides.reveal(active());
   setSelection([]);
   tool = 'pointer';
-  render();
+  render(false);
   $('.select-slide.active')?.scrollIntoView({ block: 'nearest' });
   if (overview)
     $('.sorter [data-slide="' + i + '"]')?.scrollIntoView({ block: 'nearest' });
@@ -1372,7 +1414,7 @@ function startText(event) {
     !o ||
     entry.hidden ||
     entry.locked ||
-    !(o.kind === 'text' || o.text || o.placeholder)
+    !(hasTextFrame(o) || o.placeholder)
   )
     return;
   const item = $('.artboard [data-id="' + o.id + '"]');
@@ -1421,6 +1463,7 @@ function finishText(cancel = false, deselect = false, passive = false) {
   activeEditor.close();
   if (deselect) setSelection([]);
   if (passive) {
+    renderThumbs();
     renderBoard();
     status();
   } else render();
@@ -1437,7 +1480,7 @@ document.addEventListener(
     }
     if (
       e.target.closest(
-        '[data-font],[data-line-spacing],[data-field="letterSpacing"],[data-field="size"],[data-color],[data-action="bold"],[data-action="italic"],[data-action^="align"],dialog'
+        '[data-font],[data-line-spacing],[data-vector-field="calloutShape"],[data-field="cornerRadius"],[data-field="letterSpacing"],[data-field="size"],[data-color],[data-action="bold"],[data-action="italic"],[data-action="underline"],[data-action="strike"],[data-action^="align"],dialog'
       )
     ) {
       editor.remember();
@@ -1451,10 +1494,7 @@ document.addEventListener(
         'click',
         () =>
           setTimeout(() => {
-            if (!editor) {
-              renderThumbs();
-              properties();
-            }
+            if (!editor) properties();
           }, 0),
         { once: true, capture: true }
       );
@@ -1806,7 +1846,12 @@ function objectMenu(e) {
   if (!layerPane && !e.target.closest('.viewport')) return;
   e.preventDefault();
   finishText();
-  const id = row?.dataset.layerRow || item?.dataset.id;
+  const hit =
+    item && canvasEntry(layerEntries(active().items), item.dataset.id, e.metaKey);
+  const id =
+    row?.dataset.layerRow ||
+    hit?.object.id ||
+    (e.target.closest('.selection') && selection);
   if (id && !selectedIds().includes(id)) select(id);
   if (!id) select(null);
   selectionScope = 'canvas';
@@ -1814,10 +1859,12 @@ function objectMenu(e) {
     o = selected(),
     rows = [];
   if (entries.length === 1 && !entries[0].locked) {
-    if (o.kind === 'text' || o.text || o.placeholder)
+    if (hasTextFrame(o) || o.placeholder)
       rows.push(['editText', 'Edit text', 'text']);
     if (vectorKinds.has(o.kind) && !o.placeholder)
       rows.push(['editPath', 'Edit path', 'path']);
+    if (o.kind === 'image' && !entries[0].hidden)
+      rows.push(['cropImage', 'Crop image…', 'crop']);
     if (o.kind === 'image' || o.kind === 'video')
       rows.push([
         'replaceMedia',
@@ -1829,6 +1876,8 @@ function objectMenu(e) {
   if (entries.some((entry) => !entry.locked && entry.object.kind === 'group'))
     rows.push(['ungroup', 'Ungroup', 'ungroup', '⇧⌘G']);
   if (entries.length) {
+    if (entries.every((entry) => !entry.locked))
+      rows.push(['flipHorizontal', 'Flip horizontal', 'flipHorizontal', '⇧H']);
     rows.push(['copyObjects', 'Copy', 'copy', '⌘C']);
     if (reorderLayers(entries, null, 'front'))
       rows.push(['front', 'Bring to front', 'layers']);
@@ -1927,6 +1976,7 @@ async function open(incoming) {
   }
 }
 function drawPresentation() {
+  loadSlideFonts(active());
   const host = $('.present'),
     s = scene(active(), deck, assets, 'present'),
     ratio = Math.min(innerWidth / deck.w, innerHeight / deck.h);
@@ -2079,10 +2129,7 @@ async function execute(id, button) {
     restore(id === 'undo' ? history : future, id === 'undo' ? future : history);
     return;
   }
-  if (
-    !['bold', 'italic', 'alignleft', 'aligncenter', 'alignright'].includes(id)
-  )
-    finishText();
+  if (!Object.hasOwn(textActions, id)) finishText();
   if (
     [
       'save',
@@ -2104,8 +2151,11 @@ async function execute(id, button) {
       if (id === 'save' || id === 'saveAs') await save(id === 'saveAs');
       if (id === 'open' || id === 'incoming') await open(id === 'incoming');
       if (id === 'new' && (await allowReplace())) await newDocument();
-      if (id === 'pdf' && (await exportPDF(deck, base, assets, fileTitle())))
-        toast('PDF exported.');
+      if (id === 'pdf') {
+        deck.slides.filter((slide) => !slide.hidden).forEach(loadSlideFonts);
+        if (await exportPDF(deck, base, assets, fileTitle()))
+          toast('PDF exported.');
+      }
       if (id === 'quit' && (await allowReplace())) await platform.quit();
       if (id === 'tool-image') await mediaEditor.insertImage();
       if (id === 'tool-video') await mediaEditor.insertVideo();
@@ -2127,11 +2177,9 @@ async function execute(id, button) {
   }
   if (id === 'addSlide') {
     const previous = active();
-    const next = await chooseLayout(
-      layoutOptions(base, deck, previous),
-      deck,
-      assets
-    );
+    const options = layoutOptions(base, deck, previous);
+    options.forEach(({ slide }) => loadSlideFonts(slide));
+    const next = await chooseLayout(options, deck, assets);
     if (!next) return;
     change(() => {
       index++;
@@ -2187,6 +2235,18 @@ async function execute(id, button) {
   }
   if (id === 'editText') {
     startText();
+    return;
+  }
+  if (id === 'flipHorizontal') {
+    const entries = selectedEntries();
+    if (entries.length && entries.every((entry) => !entry.locked))
+      change(() => {
+        for (const { object } of entries) object.flipH = !object.flipH;
+      });
+    return;
+  }
+  if (id === 'cropImage') {
+    await mediaEditor.cropImage(selected());
     return;
   }
   if (id === 'replaceMedia') {
@@ -2286,6 +2346,19 @@ async function execute(id, button) {
   }
   if (!selected()) return;
   if (id === 'bold' || id === 'italic') updateObject(id, !selected()[id]);
+  if (id === 'underline' || id === 'strike') {
+    const active = objectDecoration(selected(), id);
+    updateObject(
+      id,
+      id === 'underline'
+        ? active
+          ? 'none'
+          : 'sng'
+        : active
+          ? 'noStrike'
+          : 'sngStrike'
+    );
+  }
   if (id.startsWith('align')) updateObject('align', id.slice(5));
 }
 const run = (id, b) => execute(id, b).catch(fail);
@@ -2360,6 +2433,25 @@ document.addEventListener('change', (e) => {
     );
     return;
   }
+  if (
+    input.dataset.vectorField === 'curveMode' ||
+    input.hasAttribute('data-curve-percent')
+  ) {
+    const entry = selectedEntries()[0];
+    const percent = input.dataset.vectorField
+      ? input.value === 'curve'
+        ? 25
+        : null
+      : input.valueAsNumber;
+    if (
+      entry &&
+      !entry.locked &&
+      (percent === null || Number.isFinite(percent))
+    )
+      change(() => setCurvature(entry.object, vectorEdit?.selected, percent));
+    else properties();
+    return;
+  }
   if (input.dataset.vectorField) {
     updateObject(input.dataset.vectorField, input.value);
     return;
@@ -2409,6 +2501,8 @@ $('.stage').addEventListener('pointerdown', (e) => {
     p = coordinates(e);
   if (!art && !e.target.closest('.world,.viewport')) return;
   selectionScope = 'canvas';
+  if (document.activeElement?.closest('.rail,.sorter'))
+    document.activeElement.blur();
   if (pickedSlides.size) {
     pickedSlides.clear();
     railSlides.highlight(index, slideIds());
@@ -2420,7 +2514,7 @@ $('.stage').addEventListener('pointerdown', (e) => {
       insertText(p);
       return;
     }
-    if (['rect', 'ellipse', 'line'].includes(tool)) {
+    if (['rect', 'ellipse', 'line', 'callout'].includes(tool)) {
       drag = {
         mode: 'draw-vector',
         id: e.pointerId,
@@ -2452,7 +2546,6 @@ $('.stage').addEventListener('pointerdown', (e) => {
       mode: 'vertex',
       id: e.pointerId,
       start: p,
-      before: snapshot(),
       key,
       initial,
       o: entry.object,
@@ -2465,6 +2558,7 @@ $('.stage').addEventListener('pointerdown', (e) => {
     e.preventDefault();
     $('.stage').setPointerCapture(e.pointerId);
     drawSelection();
+    properties();
     return;
   }
   if (e.target.closest('[data-segment]')) {
@@ -2499,18 +2593,7 @@ $('.stage').addEventListener('pointerdown', (e) => {
   let hit = target && all.get(target.dataset.id);
   if (hit) {
     if (hit.locked || hit.hidden) return;
-    if (!e.metaKey && !e.ctrlKey) {
-      // Click a group as a unit. A deep selection from the layer tree keeps its
-      // editing context until a different branch is selected.
-      const last = all.get(selection);
-      while (
-        hit.parent &&
-        hit.object.id !== selection &&
-        !selectedIds().includes(hit.object.id) &&
-        hit.parent.object.id !== last?.parent?.object.id
-      )
-        hit = hit.parent;
-    }
+    hit = canvasEntry(all, hit.object.id, e.metaKey || e.ctrlKey);
     const id = hit.object.id;
     if (added) {
       select(id, true);
@@ -2556,7 +2639,6 @@ $('.stage').addEventListener('pointerdown', (e) => {
     sources,
     box: selectionBounds(entries),
     handle: handle?.dataset.handle,
-    before: snapshot(),
     targets: snapTargets(deck, { items: visible }, null, grid),
     collapse: !added && entries.length > 1 ? hit?.object.id : null,
     moved: false,
@@ -2584,6 +2666,9 @@ window.addEventListener('pointermove', (e) => {
     dy = p.y - drag.start.y;
   if (!drag.moved) {
     if (Math.hypot(dx, dy) * scale < 3) return;
+    // A simple click selects a layer without making a document undo entry.
+    if (drag.mode === 'objects' || drag.mode === 'vertex')
+      drag.before = snapshot();
     drag.moved = true;
     $('.stage').setPointerCapture(e.pointerId);
   }
@@ -2601,10 +2686,16 @@ window.addEventListener('pointermove', (e) => {
       paper.append(preview);
     } else {
       const pos = drag.inverse.transformPoint(end);
-      moveVertex(drag.o, drag.initial, drag.key, {
-        x: drag.anchor.x + pos.x - drag.origin.x,
-        y: drag.anchor.y + pos.y - drag.origin.y,
-      });
+      moveVertex(
+        drag.o,
+        drag.initial,
+        drag.key,
+        {
+          x: drag.anchor.x + pos.x - drag.origin.x,
+          y: drag.anchor.y + pos.y - drag.origin.y,
+        },
+        e.altKey
+      );
       $('.artboard [data-id="' + drag.o.id + '"]')?.replaceWith(
         itemNode(drag.o, assets, true)
       );
@@ -2798,6 +2889,11 @@ $('.stage').addEventListener('dblclick', (e) => {
   if (n) {
     select(n.dataset.id);
     const o = selected();
+    if (o?.kind === 'callout' && !o.locked) {
+      e.preventDefault();
+      startText(e);
+      return;
+    }
     if (o && vectorKinds.has(o.kind) && !o.locked && !o.placeholder) {
       vectorEdit = { id: o.id, selected: null };
       drawSelection();
@@ -2811,7 +2907,7 @@ $('.stage').addEventListener('dblclick', (e) => {
       return;
     }
     if (!o || o.locked || o.kind === 'video') return;
-    if (o.kind === 'text' || o.text || o.placeholder) {
+    if (hasTextFrame(o) || o.placeholder) {
       e.preventDefault();
       startText(e);
     }
@@ -2963,6 +3059,18 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   const o = selected();
+  if (
+    o &&
+    !slidesFocused &&
+    !editor &&
+    e.shiftKey &&
+    !e.altKey &&
+    e.key.toLowerCase() === 'h'
+  ) {
+    e.preventDefault();
+    if (!e.repeat) run('flipHorizontal');
+    return;
+  }
   if (o && e.altKey && !e.shiftKey) {
     const direction = {
       KeyA: 'left',
@@ -3061,7 +3169,11 @@ const initialFonts = platform
     // The first point-text measurement uses the same face as PowerPoint.
     await platform.loadTypeface('Yu Gothic', fonts);
     properties();
-    loadFonts();
+    const visible = new Set([active()]);
+    for (const preview of document.querySelectorAll('[data-preview] > .scene')) {
+      visible.add(deck.slides[Number(preview.parentElement.dataset.preview)]);
+    }
+    visible.forEach(loadSlideFonts);
   })
   .catch(fail);
 let ready = false,

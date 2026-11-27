@@ -1,4 +1,6 @@
 import { attr, child, children, emu, esc, solid } from './xml.js';
+import { calloutPresets, cornerPercent } from './shape-presets.js';
+import { curvedConnectorContour } from './connector-presets.js';
 import { paintPaths, curved, edges, vectorKinds } from './vector.js';
 
 const coordinate = (p, key) => {
@@ -54,8 +56,10 @@ export function readContours(custom, extent) {
       let p;
       if (cmd.localName === 'lnTo' && vals.length === 1) p = vals[0];
       else if (cmd.localName === 'cubicBezTo' && vals.length === 3) {
-        previous.out = vals[0];
-        p = { ...vals[2], in: vals[1] };
+        const [out, incoming, end] = vals;
+        if (out.x !== previous.x || out.y !== previous.y) previous.out = out;
+        p = end;
+        if (incoming.x !== end.x || incoming.y !== end.y) p.in = incoming;
       } else if (cmd.localName === 'quadBezTo' && vals.length === 2) {
         const [control, end] = vals;
         previous.out = {
@@ -76,11 +80,52 @@ export function readContours(custom, extent) {
   }
   return contours.length ? contours : undefined;
 }
+const calloutByPreset = new Map(
+  Object.entries(calloutPresets).map(([key, name]) => [name, key])
+);
+export function readPresetOptions(geometry) {
+  const name = attr(geometry, 'prst');
+  const shape = calloutByPreset.get(name);
+  const curvedConnector = /^curvedConnector[2-5]$/.test(name);
+  if (name !== 'roundRect' && !shape && !curvedConnector) return {};
+  const values = {};
+  for (const gd of children(child(geometry, 'avLst'), 'gd')) {
+    const match = /^val\s+([+-]?\d+)\s*$/.exec(attr(gd, 'fmla'));
+    if (match) values[attr(gd, 'name')] = Number(match[1]);
+  }
+  if (curvedConnector)
+    return { contours: [curvedConnectorContour(name, values)] };
+  if (!shape) return { cornerRadius: (values.adj ?? 16667) / 1000 };
+  return {
+    calloutShape: shape,
+    ...(values.adj1 != null && { calloutX: values.adj1 }),
+    ...(values.adj2 != null && { calloutY: values.adj2 }),
+    ...(values.adj3 != null && { cornerRadius: values.adj3 / 1000 }),
+  };
+}
+
 const xmlPoint = (p) =>
   `<a:pt x="${Math.round(p.x * 1000)}" y="${Math.round(p.y * 1000)}"/>`;
 export function geometryXML(o) {
-  if (o.kind !== 'path')
-    return `<a:prstGeom prst="${o.kind === 'text' ? 'rect' : o.kind}"><a:avLst/></a:prstGeom>`;
+  if (o.kind !== 'path' && !(o.kind === 'line' && o.contours)) {
+    let preset = o.kind === 'text' ? 'rect' : o.kind;
+    const guides = [];
+    if (o.kind === 'callout') {
+      preset = calloutPresets[o.calloutShape] || calloutPresets.ellipse;
+      if (o.calloutX != null) guides.push(['adj1', o.calloutX]);
+      if (o.calloutY != null) guides.push(['adj2', o.calloutY]);
+      if (o.calloutShape === 'roundRect' && o.cornerRadius != null)
+        guides.push(['adj3', cornerPercent(o) * 1000]);
+    } else if (o.kind === 'rect' || o.kind === 'roundRect') {
+      const percent = cornerPercent(o);
+      preset = percent ? 'roundRect' : 'rect';
+      if (percent) guides.push(['adj', percent * 1000]);
+    }
+    const list = guides
+      .map(([name, v]) => `<a:gd name="${name}" fmla="val ${Math.round(v)}"/>`)
+      .join('');
+    return `<a:prstGeom prst="${preset}"><a:avLst>${list}</a:avLst></a:prstGeom>`;
+  }
   const paths = paintPaths(o).map((contours) => {
     const d = contours
       .map((c) => {
@@ -98,7 +143,7 @@ export function geometryXML(o) {
       })
       .join('');
     const c = contours[0];
-    return `<a:path w="1000000" h="1000000" fill="${esc(c.fillMode || 'norm')}" stroke="${c.stroke === false ? 0 : 1}">${d}</a:path>`;
+    return `<a:path w="1000000" h="1000000" fill="${esc(c.fillMode || (o.kind === 'line' ? 'none' : 'norm'))}" stroke="${c.stroke === false ? 0 : 1}">${d}</a:path>`;
   });
   return `<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="l" t="t" r="r" b="b"/><a:pathLst>${paths.join('')}</a:pathLst></a:custGeom>`;
 }
@@ -126,7 +171,8 @@ export function patchVector(node, o, old, fragment) {
   const doc = sp.ownerDocument;
   if (
     vectorKinds.has(o.kind) &&
-    (o.kind !== old.kind ||
+    (o.kind !== old.kind || o.cornerRadius !== old.cornerRadius ||
+      o.calloutShape !== old.calloutShape ||
       JSON.stringify(o.contours) !== JSON.stringify(old.contours))
   ) {
     const geometry = fragment(doc, geometryXML(o)),

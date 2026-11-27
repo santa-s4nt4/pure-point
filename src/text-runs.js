@@ -38,12 +38,29 @@ export function startsEastAsian(text, run) {
 export const runFontFor = (text, run) =>
   startsEastAsian(text, run) ? run.eastAsianFont || run.font : run.font;
 
+export function isDecorated(style, key) {
+  return key === 'underline'
+    ? Boolean(style.underline && style.underline !== 'none')
+    : Boolean(style.strike && style.strike !== 'noStrike');
+}
+
+export function objectDecoration(o, key) {
+  const styles = o.paragraphs?.flatMap((p) =>
+    p.runs.length ? p.runs : [p.base]
+  );
+  return styles?.length
+    ? styles.every((style) => isDecorated(style, key))
+    : isDecorated(o, key);
+}
+
 export function decorateRun(span, run) {
   if (run.highlight) span.style.backgroundColor = run.highlight;
-  if (run.underline && run.underline !== 'none') {
-    span.style.textDecorationLine = 'underline';
-    if (run.underline === 'dbl') span.style.textDecorationStyle = 'double';
-  }
+  const lines = [];
+  if (isDecorated(run, 'underline')) lines.push('underline');
+  if (isDecorated(run, 'strike')) lines.push('line-through');
+  if (lines.length) span.style.textDecorationLine = lines.join(' ');
+  if (run.underline === 'dbl' || run.strike === 'dblStrike')
+    span.style.textDecorationStyle = 'double';
 }
 
 export function appendTextRun(line, run, typeStyle, index) {

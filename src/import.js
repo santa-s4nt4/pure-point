@@ -1,6 +1,6 @@
 import { fitGroup } from './layers.js';
 import { readNotes } from './notes.js';
-import { readContours, readLineStyle } from './vector-xml.js';
+import { readContours, readLineStyle, readPresetOptions } from './vector-xml.js';
 import { readDocumentMetadata } from './document-metadata.js';
 import { readLayerFlags } from './layer-xml.js';
 import { readPictureMedia } from './media-xml.js';
@@ -8,6 +8,7 @@ import { readTable } from './table.js';
 import { shape, slide } from './model.js';
 import {
   parse,
+  percent,
   attr,
   children,
   child,
@@ -15,28 +16,22 @@ import {
   rid,
   resolve,
   relfile,
-  R,
 } from './xml.js';
 
-export function relationships(xml, path) {
-  const raw = xml[relfile(path)];
-  return raw
-    ? children(parse(raw).documentElement).map((n) => ({
-        id: attr(n, 'Id'),
-        external:
-          attr(n, 'TargetMode') === 'External' ? attr(n, 'Target') : undefined,
-        type: attr(n, 'Type').split('/').pop(),
-        target:
-          attr(n, 'TargetMode') === 'External'
-            ? null
-            : resolve(path, attr(n, 'Target')),
-      }))
-    : [];
+export function relationships(xml, path, doc = (p) => xml[p] && parse(xml[p])) {
+  return children(doc(relfile(path))?.documentElement).map((n) => ({
+    id: attr(n, 'Id'),
+    external:
+      attr(n, 'TargetMode') === 'External' ? attr(n, 'Target') : undefined,
+    type: attr(n, 'Type').split('/').pop(),
+    target:
+      attr(n, 'TargetMode') === 'External'
+        ? null
+        : resolve(path, attr(n, 'Target')),
+  }));
 }
 const points = (node, key, fallback = 0) =>
   node?.hasAttribute(key) ? Number(attr(node, key)) / 12700 : fallback;
-const percent = (value) =>
-  value.endsWith('%') ? parseFloat(value) / 100 : Number(value) / 100000;
 const first = (...values) =>
   values.find((v) => v !== undefined && v !== null && v !== '');
 function color(node, theme, fallback = null) {
@@ -169,6 +164,7 @@ function textStyle(n, fallback, theme) {
     color: color(child(n, 'solidFill'), theme, fallback.color),
     highlight: color(child(n, 'highlight'), theme, fallback.highlight),
     underline: attr(n, 'u') || fallback.underline,
+    strike: attr(n, 'strike') || fallback.strike,
     bold: n?.hasAttribute('b')
       ? ['true', '1'].includes(attr(n, 'b'))
       : fallback.bold,
@@ -195,6 +191,7 @@ function matchPlaceholder(node, tree) {
     candidates.find((n) => attr(desc(n, 'ph'), 'type', 'obj') === type)
   );
 }
+const simplePresets = new Set(['rect', 'roundRect', 'ellipse', 'triangle', 'line']);
 function readShape(n, ctx, index, layer, master) {
   if (['nvGrpSpPr', 'grpSpPr', 'extLst'].includes(n.localName)) return null;
   const styles = [n, layer, master].filter(Boolean);
@@ -206,36 +203,32 @@ function readShape(n, ctx, index, layer, master) {
     ext = child(xfrm, 'ext');
   const info = desc(n, 'cNvPr'),
     name = attr(info, 'name', 'Object');
-  const geom = attr(first(...props.map((p) => child(p, 'prstGeom'))), 'prst');
+  const preset = first(...props.map((p) => child(p, 'prstGeom')));
+  const geom = attr(preset, 'prst');
+  const presetOptions = readPresetOptions(preset);
   const body = child(n, 'txBody');
-  const contours = readContours(child(props[0], 'custGeom'), {
-    w: Number(attr(ext, 'cx')),
-    h: Number(attr(ext, 'cy')),
-  });
-  let kind =
+  const contours =
+    readContours(child(props[0], 'custGeom'), {
+      w: Number(attr(ext, 'cx')),
+      h: Number(attr(ext, 'cy')),
+    }) || presetOptions.contours;
+  let kind;
+  if (
     n.localName === 'sp' &&
     ['1', 'true'].includes(attr(desc(n, 'cNvSpPr'), 'txBox'))
-      ? 'text'
-      : n.localName === 'pic'
-        ? 'image'
-        : n.localName === 'grpSp'
-          ? 'group'
-          : n.localName === 'graphicFrame'
-            ? 'unsupported'
-            : contours
-              ? 'path'
-              : {
-                  rect: 'rect',
-                  roundRect: 'roundRect',
-                  ellipse: 'ellipse',
-                  triangle: 'triangle',
-                  line: 'line',
-                }[geom] ||
-                (n.localName === 'cxnSp'
-                  ? 'line'
-                  : body && !geom
-                    ? 'text'
-                    : 'unsupported');
+  )
+    kind = 'text';
+  else if (n.localName === 'pic') kind = 'image';
+  else if (n.localName === 'grpSp') kind = 'group';
+  else if (n.localName === 'graphicFrame') kind = 'unsupported';
+  else if (contours) {
+    const connector =
+      n.localName === 'cxnSp' || contours === presetOptions.contours;
+    kind = connector && contours.every((c) => !c.closed) ? 'line' : 'path';
+  } else if (simplePresets.has(geom)) kind = geom;
+  else if (presetOptions.calloutShape) kind = 'callout';
+  else if (n.localName === 'cxnSp') kind = 'line';
+  else kind = body && !geom ? 'text' : 'unsupported';
   const ln = child(props[0], 'ln'),
     lnRef = child(child(n, 'style'), 'lnRef');
   const defaultStroke = kind === 'line' ? '#222521' : null;
@@ -270,6 +263,7 @@ function readShape(n, ctx, index, layer, master) {
         child(ln, 'noFill') ? null : inheritedStroke
       ),
       strokeWidth: points(ln, 'w', 1),
+      ...presetOptions,
       ...(contours ? { contours } : {}),
       ...readLineStyle(ln),
     }
@@ -280,15 +274,11 @@ function readShape(n, ctx, index, layer, master) {
     obj.table = readTable(table, ctx.theme, color, textStyle);
   }
   if (n.localName === 'pic') {
-    const blip = desc(n, 'blip'),
-      id = blip?.getAttributeNS(R, 'embed') || attr(blip, 'r:embed');
-    obj.asset = ctx.rels.find((r) => r.id === id)?.target;
-    const crop = desc(n, 'srcRect');
+    const crop = child(child(n, 'blipFill'), 'srcRect');
     obj.crop = ['l', 't', 'r', 'b'].map(
       (k) => Number(attr(crop, k, 0)) / 100000
     );
-    if (!ctx.media[obj.asset]) obj.kind = 'unsupported';
-    readPictureMedia(n, obj, ctx.rels);
+    readPictureMedia(n, obj, ctx.rels, ctx.media);
   }
   if (n.localName === 'grpSp') {
     const o = child(xfrm, 'chOff'),
@@ -442,6 +432,8 @@ function readShape(n, ctx, index, layer, master) {
         'color',
         'bold',
         'italic',
+        'underline',
+        'strike',
         'letterSpacing',
       ])
         obj[k] = s[k];
@@ -458,16 +450,16 @@ export function readSlidePage({
   page,
   rel,
   layoutPath,
+  getRels = (p) => relationships(xml, p),
 }) {
   const layout = doc(layoutPath);
   const masterPath =
       layoutPath &&
-      relationships(xml, layoutPath).find((r) => r.type === 'slideMaster')
-        ?.target,
+      getRels(layoutPath).find((r) => r.type === 'slideMaster')?.target,
     master = doc(masterPath);
   const themePath =
     masterPath &&
-    relationships(xml, masterPath).find((r) => r.type === 'theme')?.target;
+    getRels(masterPath).find((r) => r.type === 'theme')?.target;
   const theme = themeFor(doc(themePath), master, layout, page);
   const ctx = {
     rels: rel,
@@ -509,15 +501,15 @@ export function readSlidePage({
     ],
     [lt, layoutPath, attr(page.documentElement, 'showMasterSp') !== '0'],
   ]) {
-    if (show && path)
+    if (show && path) {
+      const backContext = { ...ctx, rels: getRels(path) };
       s.back.push(
         ...children(tree)
           .filter((n) => !desc(n, 'ph'))
-          .map((n, i) =>
-            readShape(n, { ...ctx, rels: relationships(xml, path) }, i)
-          )
+          .map((n, i) => readShape(n, backContext, i))
           .filter(Boolean)
       );
+    }
   }
   return s;
 }
@@ -535,17 +527,27 @@ export function importDeck(parts) {
       if (!cache.has(p)) cache.set(p, parse(xml[p]));
       return cache.get(p);
     };
+  const relationCache = new Map(),
+    getRels = (p) => {
+      if (!relationCache.has(p))
+        relationCache.set(p, relationships(xml, p, doc));
+      return relationCache.get(p);
+    };
   const pres = doc(presPath),
-    pr = relationships(xml, presPath),
+    targets = new Map(getRels(presPath).map((r) => [r.id, r.target])),
     sz = desc(pres, 'sldSz');
   const slides = children(desc(pres, 'sldIdLst'), 'sldId').map((id, i) => {
-    const source = pr.find((r) => r.id === rid(id))?.target,
-      page = doc(source);
-    if (!page) throw Error('Slide ' + (i + 1) + ' is missing.');
-    const rel = relationships(xml, source),
+    const source = targets.get(rid(id));
+    if (!xml[source]) throw Error('Slide ' + (i + 1) + ' is missing.');
+    // Each slide is consumed once. Only shared parts need to stay in the DOM cache.
+    const page = parse(xml[source]),
+      rel = getRels(source),
       layoutPath = rel.find((r) => r.type === 'slideLayout')?.target;
     return {
-      ...readSlidePage({ xml, media, doc, pres, page, rel, layoutPath }),
+      ...readSlidePage({
+        xml, media, doc, pres, page, rel, layoutPath, getRels,
+      }),
+      hidden: ['0', 'false'].includes(attr(page.documentElement, 'show')),
       notes: readNotes(rel.find((r) => r.type === 'notesSlide')?.target, doc),
       source,
       relId: rid(id),

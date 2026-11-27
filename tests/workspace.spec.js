@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { unzipSync, strFromU8 } from 'fflate';
+import { unzipSync, strFromU8, strToU8, zipSync } from 'fflate';
 import { readFile } from 'node:fs/promises';
 
 async function saveAndReopen(page, path) {
@@ -156,4 +156,93 @@ test('Dragging navigator slides uses a bounded preview of the moving selection',
   expect(previews[0].count).toBe('2');
   expect(previews[0].width).toBeLessThanOrEqual(165);
   await expect(page.locator('.slide-drag-preview')).toHaveCount(0);
+});
+
+test('Grid rows reach both margins and navigation preserves up-to-date previews', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const xml = await page.evaluate(async () => {
+    const { blankDeck, slide } = await import('/src/model.js');
+    const { exportDeck } = await import('/src/export.js');
+    const deck = blankDeck();
+    deck.slides = Array.from({ length: 32 }, () => slide());
+    return exportDeck(deck).xml;
+  });
+  const bytes = zipSync(
+    Object.fromEntries(Object.entries(xml).map(([k, v]) => [k, strToU8(v)]))
+  );
+  await page.locator('.p-menu').click();
+  const pick = page.waitForEvent('filechooser');
+  await page.locator('[data-action=open]').click();
+  await (await pick).setFiles({
+    name: 'slides.pptx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    buffer: Buffer.from(bytes),
+  });
+  await expect(page.locator('.rail .slide-tile')).toHaveCount(32);
+  const reference = await page
+    .locator('.thumbs [data-slide="2"] .scene')
+    .elementHandle();
+  await page.locator('.artboard').dblclick({ position: { x: 50, y: 50 } });
+  await page.getByRole('textbox', { name: 'Slide text' }).fill('Updated');
+  await page.locator('.thumbs [data-slide="1"]').click();
+  const edited = page.locator('.thumbs [data-slide="0"] .item-text');
+  await expect(edited).toHaveText('Updated');
+  expect(await reference.evaluate((node) => node.isConnected)).toBe(true);
+  await page.locator('.thumbs [data-slide="31"]').scrollIntoViewIfNeeded();
+  await expect(page.locator('.thumbs [data-slide="31"] .scene')).toHaveCount(1);
+  await expect(edited).toHaveCount(0);
+  await page.locator('.thumbs [data-slide="0"]').scrollIntoViewIfNeeded();
+  await expect(edited).toHaveText('Updated');
+  await page.locator('.thumbs [data-slide="0"]').click();
+  await page.locator('.artboard .item[data-id]').click();
+  await page.keyboard.press('Delete');
+  await expect(page.locator('.artboard .item-text')).toHaveCount(0);
+  await expect(page.locator('.rail .slide-tile')).toHaveCount(32);
+
+  await page.locator('.rail [data-action=overview]').click();
+  for (const width of [830, 1536]) {
+    await page.setViewportSize({ width, height: 820 });
+    for (const zoom of ['0.25', '0.5', '1', '1.5', '2', '3', '4', '6']) {
+      await page.locator('#zoom').selectOption(zoom);
+      const margins = await page.locator('.sorter').evaluate((host) => {
+        const frames = [...host.querySelectorAll('.thumb-frame')].map(
+          (n) => n.getBoundingClientRect()
+        );
+        const row = frames.filter((r) => r.top === frames[0].top);
+        const left = host.getBoundingClientRect().left + host.clientLeft;
+        return [row[0].left - left, left + host.clientWidth - row.at(-1).right];
+      });
+      expect(margins[0]).toBeGreaterThan(0);
+      expect(Math.abs(margins[0] - margins[1])).toBeLessThan(1);
+    }
+  }
+  await page.locator('#zoom').selectOption('1');
+  const host = page.locator('.sorter');
+  const card = host.locator('[data-slide="16"]');
+  await card.evaluate((n) => n.scrollIntoView({ block: 'center' }));
+  const start = await card.boundingBox();
+  const x = start.x + start.width / 2;
+  const y = start.y + start.height / 2;
+  const columns = () =>
+    host
+      .locator('.sorter-grid')
+      .evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(' ').length);
+  const initialColumns = await columns();
+  let totalDelta = 0;
+  for (const deltaY of [-1, -1, 1, 1]) {
+    await host.dispatchEvent('wheel', {
+      deltaY,
+      ctrlKey: true,
+      clientX: x,
+      clientY: y,
+    });
+    totalDelta += deltaY;
+    const current = await card.boundingBox();
+    expect(await columns()).toBe(initialColumns);
+    const expectedWidth = start.width * Math.exp(-0.012 * totalDelta);
+    expect(Math.abs(current.width - expectedWidth)).toBeLessThan(0.1);
+    expect(Math.abs(current.y + current.height / 2 - y)).toBeLessThan(1);
+  }
 });

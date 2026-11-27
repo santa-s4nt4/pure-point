@@ -1,5 +1,7 @@
+import { cornerPercent } from './shape-presets.js';
 import {
   contoursFor,
+  curveSettings,
   edgeData,
   edges,
   paintPaths,
@@ -35,7 +37,7 @@ function marker(type, color, defs) {
     viewBox: '0 0 10 10',
     markerWidth: 4,
     markerHeight: 4,
-    refX: type === 'oval' || type === 'diamond' ? 5 : 9,
+    refX: 9,
     refY: 5,
     orient: 'auto-start-reverse',
     markerUnits: 'strokeWidth',
@@ -62,6 +64,80 @@ function marker(type, color, defs) {
   defs.append(marker);
   return 'url(#' + id + ')';
 }
+
+// Stop the shaft inside each head. The markers stay on the original path so
+// their tips and tangents still coincide with the editable Bézier endpoints.
+function addArrowStroke(root, defs, path, contours, o, size, start, end) {
+  const id = 'shaft-' + crypto.randomUUID();
+  const mask = svg('mask', { id, maskUnits: 'userSpaceOnUse' });
+  let minX = 0,
+    minY = 0,
+    maxX = o.w,
+    maxY = o.h;
+  for (const c of contours) {
+    for (const n of c.nodes) {
+      for (const p of [n, n.in, n.out]) {
+        if (!p) continue;
+        const x = (p.x * o.w) / 1000,
+          y = (p.y * o.h) / 1000;
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+  }
+  const pad = Math.max(1, 4 * size);
+  const bounds = {
+    x: minX - pad,
+    y: minY - pad,
+    width: maxX - minX + 2 * pad,
+    height: maxY - minY + 2 * pad,
+  };
+  for (const [k, value] of Object.entries(bounds)) mask.setAttribute(k, value);
+  mask.append(svg('rect', { ...bounds, fill: 'white' }));
+  const last = contours.at(-1);
+  for (const [type, p] of [
+    [start && o.startArrow, contours[0].nodes[0]],
+    [end && o.endArrow, last.closed ? last.nodes[0] : last.nodes.at(-1)],
+  ]) {
+    if (type)
+      mask.append(
+        svg('circle', {
+          cx: (p.x * o.w) / 1000,
+          cy: (p.y * o.h) / 1000,
+          r: (type === 'arrow' ? 0.6 : 1.3) * size,
+          fill: 'black',
+        })
+      );
+  }
+  defs.append(mask);
+  if (path.getAttribute('fill') !== 'none')
+    root.append(
+      svg('path', {
+        d: path.getAttribute('d'),
+        fill: path.getAttribute('fill'),
+      })
+    );
+  path.setAttribute('fill', 'none');
+  path.setAttribute('mask', 'url(#' + id + ')');
+  const tips = svg('path', {
+    d: path.getAttribute('d'),
+    fill: 'none',
+    'stroke-width': size,
+    'pointer-events': 'none',
+  });
+  if (start) tips.setAttribute('marker-start', start);
+  if (end) tips.setAttribute('marker-end', end);
+  if (o.stroke?.length === 9) {
+    // Apply transparency to the assembled stroke so the joint stays uniform.
+    const ink = svg('g', { opacity: parseInt(o.stroke.slice(7), 16) / 255 });
+    path.setAttribute('stroke', o.stroke.slice(0, 7));
+    ink.append(path, tips);
+    root.append(ink);
+  } else root.append(path, tips);
+}
+
 export function vectorDrawing(o, interactive = false) {
   const root = svg('svg', {
     viewBox: `0 0 ${o.w || 1} ${o.h || 1}`,
@@ -71,8 +147,8 @@ export function vectorDrawing(o, interactive = false) {
   const color = o.stroke || 'none',
     size = o.strokeWidth ?? 1;
   const defs = svg('defs'),
-    start = marker(o.startArrow, color, defs),
-    end = marker(o.endArrow, color, defs);
+    start = marker(o.startArrow, color.slice(0, 7), defs),
+    end = marker(o.endArrow, color.slice(0, 7), defs);
   if (defs.childElementCount) root.append(defs);
   for (const contours of paintPaths(o)) {
     const c = contours[0],
@@ -88,9 +164,9 @@ export function vectorDrawing(o, interactive = false) {
         'stroke-dasharray',
         dashSegments[o.dash].map((v) => v * size).join(' ')
       );
-    if (start) p.setAttribute('marker-start', start);
-    if (end) p.setAttribute('marker-end', end);
-    root.append(p);
+    if ((start || end) && c.stroke !== false && size > 0)
+      addArrowStroke(root, defs, p, contours, o, size, start, end);
+    else root.append(p);
     if (interactive && (o.kind === 'line' || (o.kind === 'path' && !o.fill))) {
       const hit = svg('path', {
         d,
@@ -195,7 +271,29 @@ const arrowOptions = [
 function optionField(label, key, current, options) {
   return `<label class="field">${label}<select aria-label="${label}" data-vector-field="${key}">${options.map(([value, title]) => `<option value="${esc(value)}"${value === current ? ' selected' : ''}>${esc(title)}</option>`).join('')}</select></label>`;
 }
-export function strokePanel(o, { section, field, swatch }) {
+export function shapePanel(o, { section, field }) {
+  if (o.kind === 'callout')
+    return section(
+      'Shape',
+      optionField(
+        'Callout shape',
+        'calloutShape',
+        o.calloutShape || 'ellipse',
+        [
+          ['ellipse', 'Oval'],
+          ['rect', 'Rectangle'],
+          ['roundRect', 'Rounded rectangle'],
+        ]
+      )
+    );
+  if (o.kind === 'rect' || o.kind === 'roundRect')
+    return section(
+      'Shape',
+      field('Corner radius (%)', 'cornerRadius', cornerPercent(o), 0, 50)
+    );
+  return '';
+}
+export function strokePanel(o, { section, field, swatch }, selected) {
   const dash = o.dash || 'solid',
     styles = dashOptions.some(([key]) => key === dash)
       ? dashOptions
@@ -207,6 +305,19 @@ export function strokePanel(o, { section, field, swatch }) {
     o.kind === 'line' ||
     (o.kind === 'path' && contoursFor(o).some((c) => !c.closed))
   ) {
+    const settings = curveSettings(o, selected);
+    if (settings) {
+      controls += optionField(
+        selected ? 'Point type' : 'Line shape',
+        'curveMode',
+        settings.curved ? 'curve' : 'straight',
+        [
+          ['straight', 'Straight'],
+          ['curve', 'Curve'],
+        ]
+      );
+      controls += `<label class="field">Curvature (%)<input type="number" min="-200" max="200" step="any" aria-label="Curvature (%)" data-curve-percent value="${settings.percent ?? ''}" placeholder="Mixed"></label>`;
+    }
     controls +=
       optionField(
         'Start arrow',

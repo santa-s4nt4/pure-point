@@ -31,14 +31,15 @@ For a synced file in a recognized Dentsu business account, **Copy link** request
 
 ## Objects and review
 
-- Double-click a blank spot for a new Yu Gothic 16 pt text box that grows and shrinks as you type. Double-click existing text to place the caret at the pointer. Type a hyphen followed by a space at the start of a paragraph to begin a bulleted list. Click the canvas to finish. The Design tab sets character spacing in points and line spacing in PowerPoint units.
-- Drag with the rectangle, ellipse, or line tool to set the size. Double-click a shape to edit its path. Drag a vertex or Bézier handle, double-click a segment to add a vertex, and press Escape to finish. Lines support solid and dashed strokes and arrowheads on either end.
+- Double-click a blank spot for a new Yu Gothic 16 pt text box that grows and shrinks as you type. Double-click existing text to place the caret at the pointer. Type a hyphen followed by a space at the start of a paragraph to begin a bulleted list. Click the canvas to finish. In Design, use **Underline** and **Strikethrough** independently or together, and adjust character and line spacing.
+- Drag with the rectangle, ellipse, line, or callout tool to set the size. Rectangles start with square corners. Set **Corner radius (%)** in Design to round them. Callouts start oval. Choose an oval, rectangle, or rounded rectangle in Design and double-click the callout to type.
+- Select a line and choose **Curve** under **Design → Stroke → Line shape**. Double-click the line and select a point to change its curvature or drag its Bézier handles. Double-click a segment to add a vertex and press Escape to finish. Lines support solid and dashed strokes and arrowheads on either end.
 - Drag a text-box corner to change its width and height independently. Image and video handles preserve their aspect ratio. In Design, align a single object or group to the slide, or align multiple objects to their shared bounds. Click a color swatch to adjust color and opacity directly on the canvas.
 - Shift-click objects or drag an empty area to select multiple objects. The Layers tab supports multiple selection, nested groups, visibility, and locking. Drag layer rows to change their stacking order. Expand a group to work with its members.
 - Copy a selection with **⌘C** and paste with **⌘V**, or use **Copy** and **Paste** in the canvas and layer menus. Pasting on another slide keeps the original positions. A second copy on the same slide is offset so you can select it.
 - Press **⌘V** on the canvas to paste text or images from other apps. Text becomes an editable Yu Gothic 16 pt text box and keeps its line breaks. Copied pictures and screenshots become image objects embedded in the PPTX. While typing in a text box, **⌘V** pastes at the caret.
 - Select an object and post from Comments, or right-click it and choose **Add comment**. The comment follows the object and is saved as a PowerPoint comment. You can also pin comments to a position on the slide.
-- Insert an image with the image tool. Double-click an image, drag the crop edges or corners, and choose **Apply crop**. Drag inside the crop area to reposition it. **Reset crop** restores the full image. To replace the picture, choose **Replace image** in its right-click menu or the **Design** tab.
+- Insert an image with the image tool. Double-click the picture or choose **Crop image** from its right-click menu or **Design → Image**. Drag the crop edges or corners, then choose **Apply crop**. Drag inside the crop area to reposition it. **Reset crop** restores the full image. The same menu and Design panel also offer **Replace image**.
 - Insert a local movie with the video tool. On macOS, AVFoundation prepares compatible MP4 media for PowerPoint. H.264/AAC MOV files can retain their original compressed video and audio. Hover over a movie or focus it to play, seek, mute, and adjust volume. Drop another video onto its frame to replace it. For YouTube or Vimeo, use the link tool and paste a video URL. Online players require a connection and a video that permits embedding.
 
 | Action | Mac shortcut |
@@ -49,6 +50,7 @@ For a synced file in a recognized Dentsu business account, **Copy link** request
 | Undo / Redo | ⌘Z / ⇧⌘Z |
 | Copy / Paste slides or objects | ⌘C / ⌘V |
 | Group / Ungroup | ⌘G / ⇧⌘G |
+| Flip selected objects horizontally | ⇧H (outside text entry) |
 | Toggle layer visibility / lock | ⇧⌘H / ⇧⌘L |
 | Select / Text / Rectangle / Ellipse / Line | V / T / R / O / L |
 | Show layout grid | G |

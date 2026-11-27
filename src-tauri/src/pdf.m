@@ -61,7 +61,9 @@
         "if(index){const old=pages[index-1];old.hidden=true;old.replaceChildren();}"
         "const page=pages[index];page.hidden=false;void page.offsetHeight;"
         "for(const i of page.querySelectorAll('img[data-print-src]')) i.src=i.dataset.printSrc;"
-        "await Promise.all([...page.querySelectorAll('img')].map(i=>i.decode().catch(()=>{})));"
+        "await Promise.all([...page.querySelectorAll('img')].map(async i=>{"
+        "try{await i.decode()}catch{if(i.dataset.fallbackSrc){i.src=i.dataset.fallbackSrc;"
+        "await i.decode().catch(()=>{})}}}));"
         // Newly visible pages can introduce another Office font. WebKit's
         // fonts.ready may still be resolved from the previous page until paint.
         "const fonts=new Map();const walker=document.createTreeWalker(page,NodeFilter.SHOW_TEXT);"
