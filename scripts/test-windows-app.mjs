@@ -57,7 +57,7 @@ try {
     await expect(notes).toHaveValue('Windows round trip');
   }
   await page.getByLabel('Slide size').selectOption({ label: '1350 × 1950 px' });
-  await page.getByRole('button', { name: 'Show page number on this slide' }).click();
+  await page.getByRole('button', { name: 'Show page numbers' }).click();
   await expect(page.locator('.artboard .slide-page-number')).toHaveText('1');
   await page.keyboard.press('Control+s');
   await expect.poll(async () => {
@@ -79,9 +79,38 @@ try {
   await page.getByRole('textbox', { name: 'Slide text' }).fill('Live display');
   await expect(projected).toContainText('Live display');
   await page.keyboard.press('Control+Enter');
+  const clip = await readFile(new URL('../tests/fixtures/two-seconds.mp4', import.meta.url));
+  const artboard = page.locator('.artboard');
+  await artboard.evaluate((node, bytes) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array(bytes)], 'smoke.mp4', { type: 'video/mp4' }));
+    const bounds = node.getBoundingClientRect();
+    node.dispatchEvent(new DragEvent('drop', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+      clientX: bounds.left + bounds.width / 2,
+      clientY: bounds.top + bounds.height / 2,
+    }));
+  }, [...clip]);
+  const movie = artboard.locator('.video-surface');
+  const projectedMovie = projected.locator('video');
+  await expect(movie).toBeVisible({ timeout: 30000 });
+  await movie.hover();
+  await movie.getByRole('button', { name: 'Play video' }).click();
+  await expect.poll(() => projectedMovie.evaluate((node) => node.paused)).toBe(false);
+  await movie.locator('video').evaluate((node) => {
+    node.pause();
+    node.currentTime = 0.85;
+    node.volume = 0.45;
+  });
+  await expect.poll(() => projectedMovie.evaluate((node) => [
+    node.paused, Math.round(node.currentTime * 100), node.volume,
+  ])).toEqual([true, 85, 0.45]);
   await page.getByRole('button', { name: 'Add slide', exact: true }).click();
   await page.getByRole('button', { name: 'title', exact: true }).click();
-  await expect(projected).toHaveText('');
+  await expect(projected.locator('.slide-page-number')).toHaveText('2');
+  await expect(projectedMovie).toHaveCount(0);
   await viewer.bringToFront();
   await viewer.getByRole('button', { name: 'Enter fullscreen (F)', exact: true }).click();
   await expect(viewer.getByRole('button', { name: 'Exit fullscreen (F)', exact: true })).toBeVisible();

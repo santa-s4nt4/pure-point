@@ -7,35 +7,55 @@ const lengthKey = (axis) => (axis === 'x' ? 'w' : 'h');
 const farEdge = (box, axis) => box[axis] + box[lengthKey(axis)];
 const midpoint = (box, axis) => (box[axis] + farEdge(box, axis)) / 2;
 
-export function objectSpacing(entries, axis) {
-  if (entries.length !== 2) return;
-  const pair = entries.map((entry) => ({ entry, box: layerBounds(entry) }));
-  const measure = (axis) => {
-    const [first, second] = [...pair].sort(
-      (a, b) => midpoint(a.box, axis) - midpoint(b.box, axis)
-    );
-    const across = crossAxis(axis);
-    const start = farEdge(first.box, axis), end = second.box[axis];
-    const near = Math.max(first.box[across], second.box[across]);
-    const far = Math.min(farEdge(first.box, across), farEdge(second.box, across));
+function spacingAlong(selection, axis) {
+  const across = crossAxis(axis);
+  const ordered = [...selection].sort((a, b) => a.box[axis] - b.box[axis]);
+  const bands = [];
+  for (const { entry, box } of ordered) {
+    const start = box[axis], end = farEdge(box, axis);
+    const near = box[across], far = farEdge(box, across);
+    const band = bands.at(-1);
+    // An overlapping projection belongs in the same row or column. Touching
+    // objects retain a zero-gap handle, including after dragging them together.
+    if (band && (start < band.end - 1e-7 || start === band.start)) {
+      band.end = Math.max(band.end, end);
+      band.near = Math.min(band.near, near);
+      band.far = Math.max(band.far, far);
+      band.entries.push(entry);
+    } else bands.push({ start, end, near, far, entries: [entry] });
+  }
+  const gaps = bands.slice(1).map((next, index) => {
+    const previous = bands[index];
+    const near = Math.max(previous.near, next.near);
+    const far = Math.min(previous.far, next.far);
     return {
-      axis,
-      entry: second.entry,
-      start,
-      gap: end - start,
+      start: previous.end,
+      gap: Math.max(0, next.start - previous.end),
       center: (near + far) / 2,
       crossSize: Math.max(0, far - near),
     };
-  };
-  const spacing = axis ? measure(axis) : [measure('x'), measure('y')]
-    .sort((a, b) => b.gap - a.gap)[0];
-  // The handle belongs between the objects. A pair overlapping on both axes
-  // can first be separated with a regular move.
-  if (spacing.gap >= -1e-7) return { ...spacing, gap: Math.max(0, spacing.gap) };
+  });
+  return { axis, bands, gaps };
 }
 
-export function appendSpacing(layer, spacing, scale) {
-  const { axis, start, gap, center } = spacing;
+export function objectSpacing(entries, axis) {
+  const available = entries.filter((entry) => !entry.hidden && !entry.locked);
+  if (available.length !== entries.length || available.length < 2) return [];
+  const selection = available.map((entry) => ({ entry, box: layerBounds(entry) }));
+  const layouts = (axis ? [axis] : ['x', 'y'])
+    .map((direction) => spacingAlong(selection, direction))
+    .filter((layout) => layout.gaps.length);
+  if (layouts.length < 2) return layouts;
+  // A grid has distinct gaps in both directions. Diagonally separated
+  // objects get one set of handles so the two axes cannot obscure each other.
+  const aligned = layouts.filter(({ gaps }) => gaps.some((gap) => gap.crossSize > 0));
+  if (aligned.length) return aligned;
+  const total = ({ gaps }) => gaps.reduce((sum, { gap }) => sum + gap, 0);
+  return [layouts.sort((a, b) => total(b) - total(a))[0]];
+}
+
+export function appendSpacing(layer, axis, spacing, index, scale) {
+  const { start, gap, center } = spacing;
   const crossSize = Math.max(spacing.crossSize, 16 / scale);
   const region = document.createElement('div');
   region.className = 'object-spacing';
@@ -50,6 +70,7 @@ export function appendSpacing(layer, spacing, scale) {
   handle.type = 'button';
   handle.className = 'spacing-handle';
   handle.dataset.spacingHandle = axis;
+  handle.dataset.spacingGap = index;
   handle.title = `Adjust ${horizontal ? 'horizontal' : 'vertical'} spacing`;
   const amount = Math.round(gap * designUnit * 10) / 10 + ' px';
   const direction = document.createElement('span');

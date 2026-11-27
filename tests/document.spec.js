@@ -1,5 +1,52 @@
 import { expect, test } from '@playwright/test';
 
+test('Deck numbering persists with all slides hidden and migrates older numbered files', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { exportDeck } = await import('/src/export.js');
+    const { importDeck } = await import('/src/import.js');
+    const { blankDeck, slide } = await import('/src/model.js');
+    const { isPageNumberShape, pageNumbers } = await import('/src/page-numbers.js');
+    const { children, desc, parse, serialize } = await import('/src/xml.js');
+    const deck = blankDeck();
+    deck.showPageNumbers = true;
+    deck.slides[0].hidden = true;
+    const allHidden = { ...exportDeck(deck), media: {} };
+    const reopened = importDeck(allHidden);
+
+    deck.slides[0].hidden = false;
+    deck.slides.push(slide());
+    const legacy = { ...exportDeck(deck), media: {} };
+    const presPath = 'ppt/presentation.xml';
+    const pres = parse(legacy.xml[presPath]);
+    desc(pres, 'extLst').remove();
+    legacy.xml[presPath] = serialize(pres);
+    const secondPath = 'ppt/slides/slide2.xml';
+    const second = parse(legacy.xml[secondPath]);
+    children(desc(second, 'spTree')).find(isPageNumberShape).remove();
+    legacy.xml[secondPath] = serialize(second);
+    const imported = importDeck(legacy);
+    const base = { ...imported, parts: legacy, deck: structuredClone(imported.deck) };
+    const changes = exportDeck(imported.deck, base);
+    imported.deck.showPageNumbers = false;
+    const disabled = exportDeck(imported.deck, base);
+    return {
+      hiddenEnabled: reopened.deck.showPageNumbers,
+      hiddenShapes: reopened.pageNumberLabels.size,
+      migratedSecond: changes.xml[secondPath].includes('<a:t>2</a:t>'),
+      disabledCount: pageNumbers(imported.deck).size,
+      removedLegacyNumber: !disabled.xml['ppt/slides/slide1.xml'].includes('pure-point page number'),
+    };
+  });
+  expect(result).toEqual({
+    hiddenEnabled: true,
+    hiddenShapes: 0,
+    migratedSecond: true,
+    disabledCount: 0,
+    removedLegacyNumber: true,
+  });
+});
+
 test('POTX becomes a new presentation and PowerPoint review metadata survives repeated edits', async ({
   page,
 }) => {

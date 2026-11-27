@@ -7,6 +7,7 @@ export function renderComments(
     add,
     remove,
     focusPin,
+    focused,
     setPinMode,
     pinning,
     draft,
@@ -38,6 +39,13 @@ export function renderComments(
     const card = el('article', 'comment-card'),
       top = el('div', 'comment-head'),
       jump = el('button', 'comment-number');
+    card.dataset.commentId = c.id;
+    card.tabIndex = 0;
+    card.classList.toggle('focused', focused === c.id);
+    card.onfocus = () => focusPin(c);
+    card.onclick = (event) => {
+      if (!event.target.closest('button')) card.focus({ preventScroll: true });
+    };
     jump.textContent = i + 1;
     jump.title = 'Locate comment';
     jump.onclick = () => focusPin(c);

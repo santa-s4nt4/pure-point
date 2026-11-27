@@ -393,12 +393,12 @@ export function deleteVertex(o, key) {
   applyContours(o, o, contours);
   return true;
 }
-export function resizeDimensions(o, from, deltaW, deltaH, shift) {
+export function resizeDimensions(o, from, deltaW, deltaH, shift, axis) {
   const min = o.kind === 'line' || o.kind === 'path' ? 0 : 1;
-  let w = Math.max(min, from.w + deltaW),
-    h = Math.max(min, from.h + deltaH);
+  let w = axis === 'y' ? from.w : Math.max(min, from.w + deltaW),
+    h = axis === 'x' ? from.h : Math.max(min, from.h + deltaH);
   const keepProportions = shift || (o.kind !== 'text' && !vectorKinds.has(o.kind));
-  if (keepProportions && from.w > 0 && from.h > 0) {
+  if (!axis && keepProportions && from.w > 0 && from.h > 0) {
     // Project the pointer motion onto the original diagonal. Both horizontal
     // and vertical drags resize a tall or wide picture around the fixed corner.
     const ratio = Math.max(

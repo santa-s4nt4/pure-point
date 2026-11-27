@@ -101,6 +101,9 @@ test('local movies play, seek and survive PowerPoint save/open plus a dropped re
 test('YouTube and Vimeo embeds use isolated provider frames and persist in PPTX', async ({
   page,
 }, info) => {
+  await page.route(/^https:\/\/(www\.youtube\.com|player\.vimeo\.com)\//, (route) =>
+    route.fulfill({ body: '', contentType: 'text/html' })
+  );
   await page.goto('/');
   for (const [address, expected] of [
     [
@@ -112,14 +115,19 @@ test('YouTube and Vimeo embeds use isolated provider frames and persist in PPTX'
     await page.locator('[data-action="tool-embed"]').click();
     await page.getByLabel('Video URL').fill(address);
     await page.getByRole('button', { name: 'Embed', exact: true }).click();
-    const player = page.locator('.artboard .video-surface').last();
+    const vimeo = expected.includes('vimeo.com');
+    const play = { name: vimeo ? 'Play Vimeo video' : 'Play YouTube video' };
+    const player = page.locator('.artboard .video-surface').filter({
+      has: page.getByRole('button', play),
+    });
     await player.hover();
-    await player.getByRole('button', { name: /Play .* video/ }).click();
-    await expect(player.locator('iframe')).toHaveAttribute(
-      'src',
-      expected + '?autoplay=1'
-    );
-    await player.getByRole('button', { name: 'Close player' }).click();
+    await player.getByRole('button', play).click();
+    const mounted = page.locator('.artboard .video-surface').last();
+    const embed = vimeo
+      ? mounted.locator('iframe')
+      : mounted.frameLocator('iframe').locator('iframe');
+    await expect(embed).toHaveAttribute('src', new RegExp('^' + expected + '\\?'));
+    await mounted.getByRole('button', { name: 'Close player' }).click();
   }
   const parts = await exportFile(page, info.outputPath('embeds.pptx'));
   const relationships = strFromU8(parts['ppt/slides/_rels/slide1.xml.rels']);

@@ -73,8 +73,9 @@ import { inlineText } from './inline-text.js';
 import {
   blankDeck, designUnit, hasTextFrame, slide, slideSizes, textItem, uid,
 } from './model.js';
-import { pageNumbers } from './page-numbers.js';
+import { pageNumberColor, pageNumbers } from './page-numbers.js';
 import { presentationControl } from './presentation.js';
+import { replaceLiveItem, replaceLiveScene, slidePlayback } from './playback.js';
 import { loadSlideFonts as prepareSlideFonts } from './slide-fonts.js';
 import { importDeck } from './import.js';
 import { objectDecoration, runFontFor } from './text-runs.js';
@@ -95,7 +96,8 @@ const $ = (s) => document.querySelector(s);
 const action = (id, label, glyph, cls = 'icon-btn', content = false) =>
   `<button type="button" class="${cls}" data-action="${id}" aria-label="${esc(label)}" title="${esc(label)}">${icon(glyph)}${content ? esc(label) : ''}</button>`;
 const fileTitle = () => (path ? platform.fileName(path) : title);
-const loadSlideFonts = (slide) => prepareSlideFonts(slide, fonts);
+const loadSlideFonts = (slide) =>
+  prepareSlideFonts(slide, fonts, deck.showPageNumbers && !slide.hidden);
 const active = () => deck.slides[index],
   selected = () =>
     selection ? layerEntries(active().items).get(selection)?.object : undefined;
@@ -219,12 +221,15 @@ function commentPins() {
   const sc = $('.artboard>.scene');
   sc?.querySelectorAll('.comment-pin,.pending-pin').forEach((n) => n.remove());
   if (!sc || tab !== 'comments' || !inspectorOpen || overview) return;
+  for (const card of document.querySelectorAll('[data-comment-id]'))
+    card.classList.toggle('focused', card.dataset.commentId === focusComment);
   (active().comments || []).forEach((c, i) => {
     const b = el(
       'button',
       'comment-pin' + (focusComment === c.id ? ' focused' : '')
     );
     b.dataset.pin = c.id;
+    b.onclick = () => selectComment(c.id, true);
     b.textContent = i + 1;
     b.title = c.author + ' · ' + c.text;
     b.style.left = c.x + 'px';
@@ -237,6 +242,20 @@ function commentPins() {
     marker.style.top = pinPosition.y + 'px';
     sc.append(marker);
   }
+}
+function selectComment(id, fromPin = false) {
+  focusComment = id;
+  commentPins();
+  const pin = $('.artboard .comment-pin.focused');
+  if (fromPin) pin?.focus({ preventScroll: true });
+  const other = fromPin ? $('.comment-card.focused') : pin;
+  other?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+function removeComment(id) {
+  change(() => {
+    active().comments = active().comments.filter((comment) => comment.id !== id);
+    if (focusComment === id) focusComment = null;
+  });
 }
 let toastTimer;
 function toast(message) {
@@ -404,7 +423,7 @@ function status() {
   $('#slide-counter').textContent = overview
     ? deck.slides.length + ' slides'
     : `Slide ${index + 1} / ${deck.slides.length}`;
-  pageNumberButton.setAttribute('aria-pressed', Boolean(active().showPageNumber));
+  pageNumberButton.setAttribute('aria-pressed', Boolean(deck.showPageNumbers));
   document
     .querySelectorAll('[data-action="undo"]')
     .forEach((b) => (b.disabled = !history.length));
@@ -631,9 +650,11 @@ function sizing() {
   drawRulers();
 }
 let vectorEdit = null;
+let groupChild = null;
 function setSelection(ids) {
   if (vectorEdit && (ids.length !== 1 || ids[0] !== vectorEdit.id))
     vectorEdit = null;
+  if (ids.length !== 1 || ids[0] !== groupChild) groupChild = null;
   if (ids.length) selectionScope = 'canvas';
   const unique = [...new Set(ids)];
   selection = unique.pop() || null;
@@ -665,6 +686,17 @@ function canvasEntry(all, id, deep) {
 }
 function canGroup(entries) {
   return entries.length > 1 && entries.every((e) => !e.locked);
+}
+function resizeCursor(handle, transform) {
+  const vector = transform.transformPoint({
+    x: handle.includes('w') ? -1 : Number(handle.includes('e')),
+    y: handle.includes('n') ? -1 : Number(handle.includes('s')),
+    w: 0,
+  });
+  const octant = Math.round((4 * Math.atan2(vector.y, vector.x)) / Math.PI);
+  return ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'][
+    (octant + 4) % 4
+  ];
 }
 function drawSelection() {
   const sc = $('.artboard>.scene');
@@ -713,6 +745,13 @@ function drawSelection() {
       });
       layer.append(handle);
     }
+    const transform = entry.transform.multiply(shapeTransform(o));
+    for (const name of ['n', 's', 'w', 'e']) {
+      const edge = el('i', 'resize-edge');
+      edge.dataset.handle = name;
+      edge.style.cursor = resizeCursor(name, transform);
+      box.append(edge);
+    }
     for (const [name, x, y] of [
       ['nw', 0, 0],
       ['ne', 100, 0],
@@ -724,7 +763,7 @@ function drawSelection() {
       Object.assign(h.style, {
         left: x + '%',
         top: y + '%',
-        cursor: ['nw', 'se'].includes(name) ? 'nwse-resize' : 'nesw-resize',
+        cursor: resizeCursor(name, transform),
       });
       box.append(h);
     }
@@ -738,10 +777,12 @@ function drawSelection() {
       height: b.h + 'px',
     });
     layer.append(box);
-    if (selectedIds().length === 2) {
+    if (selectedIds().length === entries.length) {
       const axis = drag?.mode === 'spacing' ? drag.axis : undefined;
-      const spacing = objectSpacing(entries, axis);
-      if (spacing) appendSpacing(layer, spacing, scale);
+      for (const spacing of objectSpacing(entries, axis))
+        spacing.gaps.forEach((gap, i) =>
+          appendSpacing(layer, spacing.axis, gap, i, scale)
+        );
     }
   }
   sc.append(layer);
@@ -751,7 +792,7 @@ function renderBoard() {
   presentation.publish();
   loadSlideFonts(active());
   const sc = scene(active(), deck, assets, true);
-  $('.artboard').replaceChildren(sc);
+  replaceLiveScene($('.artboard'), sc, active().id);
   if (grid.visible) $('.artboard').append(gridOverlay(deck, grid));
   $('.stage').classList.toggle('tool-mode', tool !== 'pointer');
   drawSelection();
@@ -865,8 +906,11 @@ function editPaint(button) {
       button.querySelector('i').style.background = value || 'transparent';
       button.querySelector('span').textContent = paintLabel(value);
       presentation.publish();
-      if (key === 'bg') $('.artboard > .scene').style.background = value;
-      else {
+      if (key === 'bg') {
+        $('.artboard > .scene').style.background = value;
+        const label = $('.artboard .slide-page-number .item-text');
+        if (label) label.style.color = pageNumberColor(value);
+      } else {
         const node = $('.artboard [data-id="' + CSS.escape(target.id) + '"]');
         if (key === 'color') {
           node
@@ -982,6 +1026,7 @@ function properties() {
     renderComments(container, active(), {
       targetName: target?.object.name,
       nameFor: (id) => entries.get(id)?.object.name,
+      focused: focusComment,
       pinning,
       draft: commentDrafts.get(active().id) || '',
       onDraft: (value) => commentDrafts.set(active().id, value),
@@ -1005,17 +1050,10 @@ function properties() {
         });
       },
       remove(c) {
-        change(() => {
-          active().comments = active().comments.filter((x) => x.id !== c.id);
-        });
+        removeComment(c.id);
       },
       focusPin(c) {
-        focusComment = c.id;
-        commentPins();
-        $('.artboard .comment-pin.focused')?.scrollIntoView({
-          block: 'nearest',
-          inline: 'nearest',
-        });
+        selectComment(c.id);
       },
     });
     return;
@@ -1488,9 +1526,7 @@ function finishCrop(apply = true, keepInspector = false) {
 function refreshCanvasItem(entry) {
   while (entry.parent) entry = entry.parent;
   const o = entry.object;
-  $('.artboard [data-id="' + o.id + '"]')?.replaceWith(
-    itemNode(o, assets, true)
-  );
+  replaceLiveItem($('.artboard [data-id="' + o.id + '"]'), itemNode(o, assets, true));
 }
 function insertText(point) {
   finishText();
@@ -2069,15 +2105,12 @@ $('.stage').addEventListener(
     if (pin) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      focusComment = pin.dataset.pin;
-      commentPins();
-      const i = (active().comments || []).findIndex(
-        (c) => c.id === focusComment
-      );
-      document
-        .querySelectorAll('.comment-card')
-        [i]?.scrollIntoView({ block: 'nearest' });
+      selectComment(pin.dataset.pin, true);
       return;
+    }
+    if (focusComment) {
+      focusComment = null;
+      commentPins();
     }
     if (pinning) {
       e.preventDefault();
@@ -2096,11 +2129,8 @@ $('.stage').addEventListener(
   true
 );
 
-async function openInitialFile() {
-  let file;
+async function loadDocument(file) {
   try {
-    file = await platform.openPackage();
-    if (!file) return false;
     const loaded = importDeck(file.parts);
     reset(
       loaded.deck,
@@ -2108,14 +2138,13 @@ async function openInitialFile() {
       platform.fileName(file.path),
       file.path
     );
-    file = null;
-    return true;
-  } finally {
-    if (file) await platform.release(file);
+  } catch (error) {
+    await platform.release(file);
+    throw error;
   }
 }
 function presentationSnapshot() {
-  const { id, bg, back, showPageNumber } = active();
+  const { id, bg, back } = active();
   let { items } = active();
   if (editor?.changed()) {
     const draft = structuredClone(editor.o);
@@ -2131,8 +2160,9 @@ function presentationSnapshot() {
     items = [...items, drag.draft];
   return {
     w: deck.w, h: deck.h,
-    number: showPageNumber ? pageNumbers(deck).get(id) : null,
-    slide: { id, bg, back, items, showPageNumber },
+    number: pageNumbers(deck).get(id) ?? null,
+    slide: { id, bg, back, items },
+    playback: slidePlayback($('.artboard > .scene')),
     assets,
   };
 }
@@ -2284,8 +2314,12 @@ async function execute(id, button) {
     status();
     try {
       if (id === 'save' || id === 'saveAs') await save(id === 'saveAs');
-      if (id === 'open' || id === 'new')
-        await platform.openWindow(id === 'open');
+      if (id === 'open' || id === 'new') {
+        const reuse = id === 'open' && !path && currentRevision === savedRevision &&
+          !Array.from(commentDrafts.values()).some((draft) => draft.trim());
+        const file = await platform.openWindow(id === 'open', reuse);
+        if (file) await loadDocument(file);
+      }
       if (id === 'pdf') {
         deck.slides.filter((slide) => !slide.hidden).forEach(loadSlideFonts);
         if (await exportPDF(deck, base, assets, fileTitle()))
@@ -2330,9 +2364,7 @@ async function execute(id, button) {
   }
   if (id === 'pageNumber') {
     change(() => {
-      const s = active();
-      if (s.showPageNumber) delete s.showPageNumber;
-      else s.showPageNumber = true;
+      deck.showPageNumbers = !deck.showPageNumbers;
     });
     return;
   }
@@ -2764,19 +2796,13 @@ $('.stage').addEventListener('pointerdown', (e) => {
   }
   const spacingHandle = e.target.closest('[data-spacing-handle]');
   if (spacingHandle) {
-    const spacing = objectSpacing(
-      selectedEntries(), spacingHandle.dataset.spacingHandle
-    );
+    const spacing = spacingAt(spacingHandle);
     if (!spacing) return;
-    const { entry, axis, gap } = spacing;
-    const { x, y } = entry.object;
     drag = {
       mode: 'spacing',
       id: e.pointerId,
       start: p,
-      axis,
-      gap,
-      sources: [{ entry, from: { x, y } }],
+      ...spacing,
       moved: false,
     };
     e.preventDefault();
@@ -2876,14 +2902,31 @@ function guides(x, y) {
   sc.append(layer);
 }
 function moveObjects(sources, x, y) {
-  for (const { entry, from } of sources) {
-    const delta = localDelta(entry.transform, x, y);
+  for (const { entry, from, multiplier = 1 } of sources) {
+    const delta = localDelta(entry.transform, x * multiplier, y * multiplier);
     const o = entry.object;
     o.x = from.x + delta.x;
     o.y = from.y + delta.y;
     const node = $('.artboard [data-id="' + o.id + '"]');
     if (node) Object.assign(node.style, { left: o.x + 'px', top: o.y + 'px' });
   }
+}
+function spacingAt(handle) {
+  const axis = handle.dataset.spacingHandle;
+  const index = Number(handle.dataset.spacingGap);
+  const spacing = objectSpacing(selectedEntries(), axis)[0];
+  if (!spacing?.gaps[index]) return null;
+  return {
+    axis,
+    divider: index + 1,
+    minimum: Math.min(...spacing.gaps.map(({ gap }) => gap)),
+    sources: spacing.bands.slice(1).flatMap(({ entries }, i) =>
+      entries.map((entry) => {
+        const { x, y } = entry.object;
+        return { entry, from: { x, y }, multiplier: i + 1 };
+      })
+    ),
+  };
 }
 $('.stage').addEventListener('keydown', (e) => {
   const axis = e.target.dataset.spacingHandle;
@@ -2893,20 +2936,19 @@ $('.stage').addEventListener('keydown', (e) => {
   if (direction < 0) return;
   e.preventDefault();
   e.stopPropagation();
-  const spacing = objectSpacing(selectedEntries(), axis);
+  const spacing = spacingAt(e.target);
   if (!spacing) return;
-  const { entry, gap } = spacing;
+  const { minimum, sources } = spacing;
   const step = (e.shiftKey ? 10 : 1) / designUnit;
-  const distance = Math.max(-gap, direction ? step : -step);
+  const distance = Math.max(-minimum, direction ? step : -step);
   if (!distance) return;
-  const delta = localDelta(
-    entry.transform, axis === 'x' ? distance : 0, axis === 'y' ? distance : 0
+  change(() =>
+    moveObjects(sources, axis === 'x' ? distance : 0, axis === 'y' ? distance : 0)
   );
-  change(() => {
-    entry.object.x += delta.x;
-    entry.object.y += delta.y;
+  const index = e.target.dataset.spacingGap;
+  $(`[data-spacing-handle="${axis}"][data-spacing-gap="${index}"]`)?.focus({
+    preventScroll: true,
   });
-  $('[data-spacing-handle="' + axis + '"]')?.focus({ preventScroll: true });
 });
 window.addEventListener('pointermove', (e) => {
   if (!drag || e.pointerId !== drag.id) return;
@@ -2914,9 +2956,18 @@ window.addEventListener('pointermove', (e) => {
     dx = p.x - drag.start.x,
     dy = p.y - drag.start.y;
   const spacingDelta = drag.axis === 'x' ? dx : dy;
+  const axis = drag.handle?.length === 1
+    ? ('we'.includes(drag.handle) ? 'x' : 'y')
+    : null;
+  const entry = drag.handle && drag.sources[0].entry;
+  const transform = entry && entry.transform.multiply(shapeTransform(entry.object));
+  const resize = transform && localDelta(transform, dx, dy);
   if (!drag.moved) {
-    const distance =
-      drag.mode === 'spacing' ? Math.abs(spacingDelta) : Math.hypot(dx, dy);
+    let distance = drag.mode === 'spacing'
+      ? Math.abs(spacingDelta)
+      : Math.hypot(dx, dy);
+    if (axis === 'x') distance = Math.abs(resize.x) * Math.hypot(transform.a, transform.b);
+    if (axis === 'y') distance = Math.abs(resize.y) * Math.hypot(transform.c, transform.d);
     if (distance * scale < 3) return;
     // A simple click selects a layer without making a document undo entry.
     if (['objects', 'vertex', 'callout-tip', 'spacing'].includes(drag.mode))
@@ -2926,7 +2977,7 @@ window.addEventListener('pointermove', (e) => {
   }
   if (drag.mode === 'spacing') {
     const horizontal = drag.axis === 'x';
-    const distance = Math.max(-drag.gap, spacingDelta);
+    const distance = Math.max(-drag.minimum, spacingDelta / drag.divider);
     moveObjects(
       drag.sources, horizontal ? distance : 0, horizontal ? 0 : distance
     );
@@ -3030,37 +3081,34 @@ window.addEventListener('pointermove', (e) => {
       s = Math.sin(a);
     const west = handle.includes('w') !== !!o.flipH,
       north = handle.includes('n') !== !!o.flipV;
-    const d = localDelta(entry.transform, dx, dy);
-    let lx = d.x * c + d.y * s,
-      ly = -d.x * s + d.y * c;
+    let lx = axis !== 'y' ? resize.x * (o.flipH ? -1 : 1) : 0;
+    let ly = axis !== 'x' ? resize.y * (o.flipV ? -1 : 1) : 0;
     if (snap && !entry.parent && Math.abs(a) < 0.0001) {
-      const sx = snapAxis(
-          [from.x + (west ? 0 : from.w) + lx],
-          targets.x,
-          5 / scale
-        ),
-        sy = snapAxis(
+      if (axis !== 'y') {
+        const sx = snapAxis([from.x + (west ? 0 : from.w) + lx], targets.x, 5 / scale);
+        lx += sx.delta;
+        gx = sx.guide;
+      }
+      if (axis !== 'x') {
+        const sy = snapAxis(
           [from.y + (north ? 0 : from.h) + ly],
           targets.y,
           5 / scale
         );
-      lx += sx.delta;
-      ly += sy.delta;
-      gx = sx.guide;
-      gy = sy.guide;
+        ly += sy.delta;
+        gy = sy.guide;
+      }
     }
     Object.assign(
       o,
-      resizeDimensions(o, from, west ? -lx : lx, north ? -ly : ly, e.shiftKey)
+      resizeDimensions(o, from, west ? -lx : lx, north ? -ly : ly, e.shiftKey, axis)
     );
     if (o.kind === 'text') o.autoWidth = false;
     const mx = ((o.w - from.w) * (west ? -1 : 1)) / 2,
       my = ((o.h - from.h) * (north ? -1 : 1)) / 2;
     o.x = from.x + from.w / 2 + mx * c - my * s - o.w / 2;
     o.y = from.y + from.h / 2 + mx * s + my * c - o.h / 2;
-    $('.artboard [data-id="' + o.id + '"]')?.replaceWith(
-      itemNode(o, assets, true)
-    );
+    replaceLiveItem($('.artboard [data-id="' + o.id + '"]'), itemNode(o, assets, true));
   }
   drawSelection();
   guides(gx, gy);
@@ -3156,31 +3204,33 @@ $('.stage').addEventListener('dblclick', (e) => {
   }
   if (e.target.closest('[data-vertex],.callout-tip,[data-handle],[data-spacing-handle]')) return;
   if (n) {
-    select(n.dataset.id);
-    const o = selected();
-    if (
-      o &&
-      !o.locked &&
-      (o.kind === 'callout' ||
-        (hasTextFrame(o) && e.target.closest('.item-text')))
-    ) {
+    const entry = layerEntries(active().items).get(n.dataset.id);
+    if (!entry || entry.hidden || entry.locked) return;
+    const o = entry.object;
+    select(o.id);
+    if (entry.parent && groupChild !== o.id) {
+      groupChild = o.id;
+      e.preventDefault();
+      return;
+    }
+    if (o.kind === 'callout' || (hasTextFrame(o) && e.target.closest('.item-text'))) {
       e.preventDefault();
       startText(e);
       return;
     }
-    if (o && vectorKinds.has(o.kind) && !o.locked && !o.placeholder) {
+    if (vectorKinds.has(o.kind) && !o.placeholder) {
       vectorEdit = { id: o.id, selected: null };
       drawSelection();
       properties();
       e.preventDefault();
       return;
     }
-    if (o?.kind === 'image') {
+    if (o.kind === 'image') {
       e.preventDefault();
       startCrop();
       return;
     }
-    if (!o || o.locked || o.kind === 'video') return;
+    if (o.kind === 'video') return;
     if (hasTextFrame(o) || o.placeholder) {
       e.preventDefault();
       startText(e);
@@ -3202,6 +3252,16 @@ document.addEventListener('keydown', (e) => {
       'input,textarea,select,[contenteditable="true"]'
     ),
     cmd = platform.windows ? e.ctrlKey && !e.getModifierState('AltGraph') : e.metaKey || e.ctrlKey;
+  if (!editing && !cmd && ['Delete', 'Backspace'].includes(e.key)) {
+    const target = e.target.closest('[data-comment-id], [data-pin]');
+    if (focusComment && (target?.dataset.commentId || target?.dataset.pin) === focusComment) {
+      e.preventDefault();
+      removeComment(focusComment);
+      $('.comments-panel [aria-label="Place a comment pin"]')?.focus({ preventScroll: true });
+      return;
+    }
+    if (e.target.closest('.comments-panel')) return;
+  }
   if (cropEdit && !cmd) {
     if (
       e.key === 'Escape' ||
@@ -3456,7 +3516,9 @@ const initialFonts = platform
   .catch(fail);
 platform.nativeEvents(run).then(async () => {
   try {
-    if (!(await openInitialFile())) await newDocument();
+    const file = await platform.openPackage();
+    if (file) await loadDocument(file);
+    else await newDocument();
     await initialFonts;
   } catch (err) {
     await fail(err);

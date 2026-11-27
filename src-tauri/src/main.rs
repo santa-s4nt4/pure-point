@@ -24,7 +24,7 @@ use rfd::AsyncFileDialog;
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -49,11 +49,17 @@ struct Opened {
 }
 
 fn document_window(app: &AppHandle, path: Option<PathBuf>) -> Result<(), String> {
-    let state = app.state::<Documents>();
     let label = format!(
         "document-{}",
-        state.sequence.fetch_add(1, Ordering::Relaxed)
+        app.state::<Documents>()
+            .sequence
+            .fetch_add(1, Ordering::Relaxed)
     );
+    editor_window(app, label, path)
+}
+
+fn editor_window(app: &AppHandle, label: String, path: Option<PathBuf>) -> Result<(), String> {
+    let state = app.state::<Documents>();
     let mut config = app.config().app.windows[0].clone();
     config.label = label.clone();
     if let Some(path) = path {
@@ -71,7 +77,12 @@ fn document_window(app: &AppHandle, path: Option<PathBuf>) -> Result<(), String>
 }
 
 #[tauri::command]
-async fn new_document_window(window: WebviewWindow, pick: bool) -> Result<(), String> {
+async fn new_document_window(
+    window: WebviewWindow,
+    pick: bool,
+    reuse: bool,
+    state: State<'_, Documents>,
+) -> Result<Option<Opened>, String> {
     let path = if pick {
         let Some(file) = AsyncFileDialog::new()
             .set_parent(&window)
@@ -79,13 +90,18 @@ async fn new_document_window(window: WebviewWindow, pick: bool) -> Result<(), St
             .pick_file()
             .await
         else {
-            return Ok(());
+            return Ok(None);
         };
-        Some(file.path().to_owned())
+        let path = file.path().to_owned();
+        if reuse {
+            return read_document(&state, path).await.map(Some);
+        }
+        Some(path)
     } else {
         None
     };
-    document_window(window.app_handle(), path)
+    document_window(window.app_handle(), path)?;
+    Ok(None)
 }
 
 #[tauri::command]
@@ -258,23 +274,27 @@ async fn sample_screen_color() -> Result<Option<String>, String> {
         .map_err(|e| e.to_string())?;
     Ok((rgb >= 0).then(|| format!("#{rgb:06X}")))
 }
+fn is_presentation(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("pptx"))
+}
+
 fn main() {
-    let documents = Documents::default();
+    #[cfg(target_os = "macos")]
+    let mut launch_files: Vec<PathBuf> = Vec::new();
+    #[cfg(target_os = "macos")]
+    let mut started = false;
+    let builder = tauri::Builder::default().manage(Documents::default());
     #[cfg(windows)]
-    if let Some(path) = std::env::args_os().skip(1).map(PathBuf::from).find(|p| {
-        p.extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("pptx"))
-    }) {
-        documents
-            .incoming
-            .lock()
-            .unwrap()
-            .insert("main".into(), path);
-    }
-    let builder = tauri::Builder::default().manage(documents);
+    let builder = builder.setup(|app| {
+        let file = std::env::args_os()
+            .skip(1)
+            .map(PathBuf::from)
+            .find(|path| is_presentation(path));
+        editor_window(app.handle(), "main".into(), file).map_err(Into::into)
+    });
     #[cfg(target_os = "macos")]
     let builder = builder
-        .setup(gestures::install)
         .menu(|app| {
             let app_menu = SubmenuBuilder::new(app, "pure-point")
                 .hide()
@@ -377,7 +397,22 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("pure-point could not start")
-        .run(|app, event| match event {
+        .run(move |app, event| match event {
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::MainEventsCleared if !started => {
+                // Finder can deliver its initial files before the app's first idle turn.
+                started = true;
+                let mut files = std::mem::take(&mut launch_files).into_iter();
+                if let Err(error) = editor_window(app, "main".into(), files.next()) {
+                    eprintln!("Could not open the editor: {error}");
+                    app.exit(1);
+                }
+                for path in files {
+                    if let Err(error) = document_window(app, Some(path)) {
+                        eprintln!("Could not open presentation window: {error}");
+                    }
+                }
+            }
             tauri::RunEvent::Exit => {
                 movies::clear();
                 app.state::<Documents>().sources.lock().unwrap().clear();
@@ -387,12 +422,11 @@ fn main() {
                 for path in urls
                     .iter()
                     .filter_map(|url| url.to_file_path().ok())
-                    .filter(|p| {
-                        p.extension()
-                            .is_some_and(|e| e.eq_ignore_ascii_case("pptx"))
-                    })
+                    .filter(|path| is_presentation(path))
                 {
-                    if let Err(error) = document_window(app, Some(path)) {
+                    if !started {
+                        launch_files.push(path);
+                    } else if let Err(error) = document_window(app, Some(path)) {
                         eprintln!("Could not open presentation window: {error}");
                     }
                 }

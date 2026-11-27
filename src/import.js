@@ -10,7 +10,11 @@ import { readDocumentMetadata } from './document-metadata.js';
 import { readLayerFlags } from './layer-xml.js';
 import { readPictureMedia } from './media-xml.js';
 import { readTable } from './table.js';
-import { isPageNumberShape } from './page-numbers.js';
+import {
+  hasPageNumberSetting,
+  isPageNumberShape,
+  readPageNumberLabel,
+} from './page-numbers.js';
 import { shape, slide } from './model.js';
 import {
   parse,
@@ -499,7 +503,6 @@ export function readSlidePage({
   const name = attr(desc(page, 'cSld'), 'name');
   const s = {
     ...slide(name, bg, items),
-    ...(nodes.some(isPageNumberShape) && { showPageNumber: true }),
     layoutPath,
     themeColors: Object.values(theme.colors)
       .filter((v) => /^[\da-f]{6}$/i.test(v))
@@ -550,6 +553,7 @@ export function importDeck(parts) {
     targets = new Map(getRels(presPath).map((r) => [r.id, r.target])),
     sz = desc(pres, 'sldSz');
   const slidesToRepair = new Set();
+  const pageNumberLabels = new Map();
   const slides = children(desc(pres, 'sldIdLst'), 'sldId').map((id, i) => {
     const source = targets.get(rid(id));
     if (!xml[source]) throw Error('Slide ' + (i + 1) + ' is missing.');
@@ -558,6 +562,8 @@ export function importDeck(parts) {
       rel = getRels(source),
       layoutPath = rel.find((r) => r.type === 'slideLayout')?.target;
     if (customConnectors(page).length) slidesToRepair.add(source);
+    const label = readPageNumberLabel(page);
+    if (label) pageNumberLabels.set(source, label);
     return {
       ...readSlidePage({
         xml, media, doc, pres, page, rel, layoutPath, getRels,
@@ -573,12 +579,17 @@ export function importDeck(parts) {
     throw Error('This presentation contains no editable slides.');
   return {
     deck: readDocumentMetadata(
-      { w: points(sz, 'cx', 960), h: points(sz, 'cy', 540), slides },
+      {
+        w: points(sz, 'cx', 960), h: points(sz, 'cy', 540), slides,
+        // Older files stored the numbering preference on the individual shapes.
+        showPageNumbers: hasPageNumberSetting(pres) || pageNumberLabels.size > 0,
+      },
       xml,
       presPath,
       doc
     ),
     presPath,
     slidesToRepair,
+    pageNumberLabels,
   };
 }

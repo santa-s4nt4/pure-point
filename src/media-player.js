@@ -1,6 +1,8 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { createElement, Play, Pause, Volume2, VolumeX, X } from 'lucide';
 import { mediaURL, onlineVideo, setImageSource } from './media-format.js';
+import { currentTime, trackPlayback } from './playback.js';
+import { connectYouTube, connectVimeo } from './online-playback.js';
 import './media.css';
 
 const element = (tag, cls) => {
@@ -43,7 +45,134 @@ function slider(label, step, max) {
   s.value = '0';
   return s;
 }
-export function videoNode(o, assets, live = false, deferImages = false) {
+const initialPlayback = {
+  opened: true,
+  time: 0,
+  playing: true,
+  volume: 1,
+  muted: false,
+  rate: 1,
+};
+
+function onlineControls(host, online, controls, play, report, clear, observe) {
+  const provider = element('span', 'video-time');
+  provider.textContent = online.provider;
+  controls.append(play, provider);
+  host.append(controls);
+  let player, frame, close, desired, opening;
+  let generation = 0;
+  function detach() {
+    generation++;
+    player?.close();
+    frame?.remove();
+    close?.remove();
+    player = frame = close = opening = desired = null;
+    controls.hidden = false;
+    play.disabled = false;
+  }
+
+  const publish = trackPlayback(host, online.embed, (state, seek) => {
+    if (!state.opened) {
+      detach();
+      clear();
+      return;
+    }
+    desired = { state, seek: seek || desired?.seek };
+    if (player) apply();
+    else mount();
+  }, detach);
+
+  function apply() {
+    if (!desired) return;
+    player.apply(desired.state, desired.seek);
+    desired = null;
+  }
+
+  function read(state, options) {
+    if (![state.time, state.rate, state.volume].every(Number.isFinite)) return;
+    if (state.playing) clear();
+    if (observe) publish({ ...state, opened: true }, options);
+  }
+
+  function trouble(reason) {
+    report(reason === 'blocked'
+      ? 'Press play in the video player to continue.'
+      : 'The video provider could not play this video.');
+  }
+
+  async function mount() {
+    if (opening) return;
+    const ticket = ++generation;
+    opening = true;
+    play.disabled = true;
+    try {
+      const url = new URL(online.embed);
+      const youtube = online.provider === 'YouTube';
+      let src;
+      if (youtube) {
+        const id = url.pathname.split('/').pop();
+        if (isTauri()) src = await invoke('youtube_player_url', { id });
+        else {
+          const wrapper = new URL('youtube-player.html', location.href);
+          wrapper.hash = new URLSearchParams({ id });
+          src = wrapper.href;
+        }
+      } else {
+        // Vimeo otherwise automatically pauses its matching player in the
+        // other window when the second copy of this video starts.
+        url.searchParams.set('autopause', '0');
+        url.searchParams.set('autoplay', desired?.state.playing ? '1' : '0');
+        src = url.href;
+      }
+      if (!host.isConnected || generation !== ticket) return;
+      frame = element('iframe', 'online-player');
+      frame.src = src;
+      frame.title = online.provider + ' video';
+      frame.referrerPolicy = 'strict-origin-when-cross-origin';
+      frame.allow =
+        'autoplay; encrypted-media; picture-in-picture; fullscreen';
+      frame.allowFullscreen = true;
+      close = control('Close player', X);
+      close.classList.add('close-player');
+      close.onclick = (event) => {
+        event.stopPropagation();
+        if (observe) publish({ ...initialPlayback, playing: false, opened: false });
+        detach();
+        clear();
+        play.focus();
+      };
+      close.onpointerdown = (event) => event.stopPropagation();
+      host.append(frame, close);
+      controls.hidden = true;
+      const connected = youtube
+        ? connectYouTube(frame, observe, read, trouble)
+        : await connectVimeo(frame, observe, read, trouble);
+      if (generation !== ticket || !host.isConnected) {
+        connected?.close();
+        return;
+      }
+      player = connected;
+      if (player) apply();
+    } catch {
+      if (generation === ticket) {
+        detach();
+        trouble('error');
+      }
+    } finally {
+      if (generation === ticket) {
+        opening = false;
+        play.disabled = false;
+      }
+    }
+  }
+
+  play.addEventListener('click', () => {
+    desired = { state: { ...initialPlayback, at: Date.now() }, seek: true };
+    mount();
+  });
+}
+
+export function videoNode(o, assets, interactive = false, deferImages = false) {
   const host = element('div', 'video-surface');
   host.dataset.videoId = o.id;
   const online = onlineVideo(o.embed);
@@ -54,12 +183,13 @@ export function videoNode(o, assets, live = false, deferImages = false) {
     setImageSource(p, assets[o.poster], deferImages);
     host.append(p);
   }
-  if (!live) return host;
+  if (!interactive) return host;
+  const observe = interactive !== 'present';
   const controls = element('div', 'media-controls');
   controls.dataset.mediaControl = '';
   // Keep player input out of selection, dragging and slide navigation.
   for (const event of ['pointerdown', 'click', 'dblclick', 'keydown', 'keyup'])
-    controls.addEventListener(event, (e) => e.stopPropagation());
+    controls.addEventListener(event, (event) => event.stopPropagation());
   const feedback = element('div', 'video-feedback');
   feedback.setAttribute('role', 'status');
   feedback.hidden = true;
@@ -67,53 +197,11 @@ export function videoNode(o, assets, live = false, deferImages = false) {
     feedback.textContent = message;
     feedback.hidden = false;
   };
+  const clear = () => { feedback.hidden = true; };
   host.append(feedback);
-  const play = control(
-    online ? 'Play ' + online.provider + ' video' : 'Play video',
-    Play
-  );
+  const play = control(online ? 'Play ' + online.provider + ' video' : 'Play video', Play);
   if (online) {
-    const provider = element('span', 'video-time');
-    provider.textContent = online.provider;
-    controls.append(play, provider);
-    host.append(controls);
-    play.addEventListener('click', async () => {
-      play.disabled = true;
-      try {
-        if (!host.isConnected) return;
-        const frame = element('iframe', 'online-player');
-        const url = new URL(online.embed);
-        url.searchParams.set('autoplay', '1');
-        frame.src =
-          online.provider === 'YouTube' && isTauri()
-            ? await invoke('youtube_player_url', {
-                id: url.pathname.split('/').pop(),
-              })
-            : url.href;
-        if (!host.isConnected) return;
-        frame.title = online.provider + ' video';
-        frame.referrerPolicy = 'strict-origin-when-cross-origin';
-        frame.allow =
-          'autoplay; encrypted-media; picture-in-picture; fullscreen';
-        frame.allowFullscreen = true;
-        const close = control('Close player', X);
-        close.classList.add('close-player');
-        close.onclick = (e) => {
-          e.stopPropagation();
-          frame.remove();
-          close.remove();
-          controls.hidden = false;
-          play.focus();
-        };
-        close.onpointerdown = (e) => e.stopPropagation();
-        host.append(frame, close);
-        controls.hidden = true;
-      } catch (error) {
-        report(String(error));
-      } finally {
-        play.disabled = false;
-      }
-    });
+    onlineControls(host, online, controls, play, report, clear, observe);
     return host;
   }
   if (!assets[o.asset]) {
@@ -132,67 +220,122 @@ export function videoNode(o, assets, live = false, deferImages = false) {
   volume.value = '1';
   const stamp = element('span', 'video-time');
   stamp.textContent = '0:00';
-  let ready = false;
+  let ready = false, pending, starting, autoplayBlocked = false, interacted = false;
+
   function load() {
     if (!ready) {
       video.src = mediaURL(assets[o.asset]);
       ready = true;
     }
   }
-  async function toggle() {
+
+  const publish = trackPlayback(host, o.asset, (state, move) => {
+    interacted = true;
+    pending = { state, move: move || pending?.move };
     load();
-    if (!video.paused) {
-      video.pause();
-      return;
+    apply();
+  }, () => {
+    video.pause();
+    if (ready) {
+      video.removeAttribute('src');
+      video.load();
     }
-    try {
-      await video.play();
-      feedback.hidden = true;
-    } catch (e) {
-      if (e.name !== 'AbortError')
-        report('This video codec could not be played.');
-    }
+  });
+
+  function state(options) {
+    if (observe && interacted)
+      publish({
+        opened: true,
+        time: video.currentTime,
+        playing: !video.paused && !video.ended,
+        volume: video.volume,
+        muted: video.muted,
+        rate: video.playbackRate,
+      }, options);
   }
-  play.onclick = toggle;
+
+  function start() {
+    if (starting) return;
+    starting = video.play().then(clear).catch((error) => {
+      if (error.name === 'AbortError') return;
+      autoplayBlocked = error.name === 'NotAllowedError';
+      report(autoplayBlocked
+        ? 'Press play here to enable synchronized playback.'
+        : 'This video codec could not be played.');
+    }).finally(() => { starting = null; });
+  }
+
+  function apply() {
+    if (!pending) return;
+    const { state: next, move } = pending;
+    video.volume = next.volume;
+    video.muted = next.muted;
+    video.playbackRate = next.rate;
+    if (video.readyState >= 1) {
+      const target = Math.min(currentTime(next), video.duration);
+      if (Number.isFinite(target) && (move || Math.abs(video.currentTime - target) > 0.45))
+        video.currentTime = target;
+      pending = null;
+    }
+    if (next.playing) {
+      if (video.paused && (!autoplayBlocked || next.muted)) start();
+    } else if (!video.paused) video.pause();
+  }
+
+  play.onclick = () => {
+    interacted = true;
+    load();
+    autoplayBlocked = false;
+    if (video.paused) start();
+    else video.pause();
+  };
+  video.addEventListener('play', () => state());
   video.addEventListener('playing', () => {
     host.classList.add('playing');
     play.replaceChildren(glyph(Pause));
     play.setAttribute('aria-label', 'Pause video');
     play.title = 'Pause video';
+    state();
   });
   video.addEventListener('pause', () => {
     play.replaceChildren(glyph(Play));
     play.setAttribute('aria-label', 'Play video');
     play.title = 'Play video';
+    state();
   });
   video.addEventListener('loadedmetadata', () => {
     if (Number.isFinite(video.duration)) seek.max = String(video.duration);
+    apply();
   });
   video.addEventListener('timeupdate', () => {
     seek.value = String(video.currentTime);
     stamp.textContent = time(video.currentTime);
+    state();
   });
-  video.addEventListener('error', () =>
-    report('This video codec could not be played.')
-  );
-  host.addEventListener(
-    'pointerenter',
-    () => {
-      if (!ready) {
-        video.preload = 'metadata';
-        load();
-      }
-    },
-    { once: true }
-  );
+  video.addEventListener('seeking', () => {
+    if (video.readyState) host.classList.add('playing');
+    state({ seek: true });
+  });
+  video.addEventListener('ended', () => state());
+  video.addEventListener('ratechange', () => state());
+  video.addEventListener('error', () => report('This video codec could not be played.'));
+  host.addEventListener('pointerenter', () => {
+    if (!ready) {
+      video.preload = 'metadata';
+      load();
+    }
+  }, { once: true });
   seek.oninput = () => {
+    interacted = true;
     load();
     if (Number.isFinite(video.duration)) video.currentTime = Number(seek.value);
   };
   mute.onclick = () => {
+    interacted = true;
     video.muted = !video.muted;
   };
   volume.oninput = () => {
+    interacted = true;
     video.volume = Number(volume.value);
     video.muted = false;
   };
@@ -201,6 +344,7 @@ export function videoNode(o, assets, live = false, deferImages = false) {
     mute.replaceChildren(glyph(silent ? VolumeX : Volume2));
     mute.setAttribute('aria-label', silent ? 'Unmute' : 'Mute');
     volume.value = String(video.muted ? 0 : video.volume);
+    state();
   };
   controls.append(play, seek, stamp, mute, volume);
   host.append(video, controls);

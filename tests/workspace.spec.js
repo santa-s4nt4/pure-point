@@ -163,7 +163,7 @@ test('A fitted canvas pans diagonally and reveals overflowing objects', async ({
   await expect(page.locator('.thumbs .scene').first()).toHaveCSS('overflow', 'hidden');
 });
 
-test('Portrait layouts and selected page numbers survive save and reopen', async ({ page }, info) => {
+test('Portrait layouts and deck-wide contrasting page numbers survive save and reopen', async ({ page }, info) => {
   await page.goto('/');
   const xml = await page.evaluate(async () => {
     const { blankDeck, shape } = await import('/src/model.js');
@@ -192,7 +192,7 @@ test('Portrait layouts and selected page numbers survive save and reopen', async
     ))),
   });
   const size = page.getByLabel('Slide size');
-  const numberButton = page.getByRole('button', { name: 'Show page number on this slide' });
+  const numberButton = page.getByRole('button', { name: 'Show page numbers' });
   const pageNumber = page.locator('.artboard .slide-page-number');
   const title = page.locator('.artboard .empty-placeholder').first();
   const decoration = page.locator('.artboard .scene > .item:not([data-id], .slide-page-number)');
@@ -210,6 +210,7 @@ test('Portrait layouts and selected page numbers survive save and reopen', async
   });
   await numberButton.click();
   await expect(pageNumber).toHaveText('1');
+  await expect(pageNumber.locator('.item-text')).toHaveCSS('color', 'rgb(0, 0, 0)');
   expect(await numberFormat()).toMatchObject({ x: 1895, y: 1040, size: '12px', align: 'right', font: expect.stringContaining('Yu Gothic') });
   await size.selectOption({ label: '1350 × 1950 px' });
   const portraitTop = await top();
@@ -227,12 +228,17 @@ test('Portrait layouts and selected page numbers survive save and reopen', async
     await page.getByRole('button', { name: 'title', exact: true }).click();
     await expect(size).toHaveValue('1');
     expect(await top()).toBeCloseTo(portraitTop, 3);
-    await expect(numberButton).toHaveAttribute('aria-pressed', 'false');
-    if (i > 0) await numberButton.click();
+    await expect(numberButton).toHaveAttribute('aria-pressed', 'true');
+    await expect(pageNumber).toHaveText(String(i + 2));
+    if (i === 0) {
+      await page.locator('[data-color=bg]').click();
+      await page.getByLabel('Hex color').fill('162035');
+      await expect(pageNumber.locator('.item-text')).toHaveCSS('color', 'rgb(255, 255, 255)');
+      await page.keyboard.press('Escape');
+    }
   }
-  await expect(pageNumber).toHaveText('3');
   await rail.locator('[data-hide-slide="2"]').click({ force: true });
-  await expect(pageNumber).toHaveText('2');
+  await expect(pageNumber).toHaveText('3');
   const output = info.outputPath('portrait.pptx');
   page = await saveAndReopen(page, output);
   await expect(page.getByLabel('Slide size')).toHaveValue('1');
@@ -241,25 +247,24 @@ test('Portrait layouts and selected page numbers survive save and reopen', async
     ['left', 'top', 'width', 'height'].map((key) => parseFloat(node.style[key]))
   );
   restoredFrame.forEach((value, index) => expect(value).toBeCloseTo(portraitFrame[index], 3));
-  for (const [index, value] of ['1', '', '', '2'].entries()) {
+  for (const [index, value] of ['1', '2', '', '3'].entries()) {
     await page.locator(`.rail [data-slide="${index}"]`).click();
     if (value) await expect(numbers).toHaveText(value);
     else await expect(numbers).toHaveCount(0);
   }
   await page.locator('.rail [data-hide-slide="2"]').click({ force: true });
-  await expect(numbers).toHaveText('3');
+  await expect(numbers).toHaveText('4');
   const parts = unzipSync(await readFile(output));
   const presentation = strFromU8(parts['ppt/presentation.xml']);
   expect(presentation).toContain('<p:sldSz cx="8572500" cy="12382500"');
   const fourth = strFromU8(parts['ppt/slides/slide4.xml']);
-  expect(fourth).toContain('<a:t>2</a:t>');
+  expect(fourth).toContain('<a:t>3</a:t>');
   expect(fourth).toContain('<a:off x="7651750" y="12128500"');
   expect(fourth).toContain('<a:latin typeface="Yu Gothic"');
   expect(fourth).toContain('sz="1200"');
   expect(fourth).not.toContain('NaN');
-  expect(strFromU8(parts['ppt/slides/slide3.xml'])).toContain(
-    'name="pure-point page number" hidden="1"'
-  );
+  expect(strFromU8(parts['ppt/slides/slide3.xml'])).not.toContain('pure-point page number');
+  expect(strFromU8(parts['ppt/slides/slide2.xml'])).toContain('<a:srgbClr val="FFFFFF"');
   const savedXml = Object.fromEntries(Object.entries(parts).map(([part, data]) => [part, strFromU8(data)]));
   const pdf = await page.evaluate(async (xml) => {
     const { importDeck } = await import('/src/import.js');
@@ -269,11 +274,33 @@ test('Portrait layouts and selected page numbers survive save and reopen', async
     const doc = new DOMParser().parseFromString(html, 'text/html');
     return { width, height, count, labels: [...doc.querySelectorAll('.slide-page-number')].map((n) => n.textContent) };
   }, savedXml);
-  expect(pdf).toEqual({ width: 675, height: 975, count: 3, labels: ['1', '2'] });
+  expect(pdf).toEqual({ width: 675, height: 975, count: 3, labels: ['1', '2', '3'] });
   const renumbered = info.outputPath('renumbered.pptx');
   await saveAndReopen(page, renumbered);
   const updated = unzipSync(await readFile(renumbered));
-  expect(strFromU8(updated['ppt/slides/slide4.xml'])).toContain('<a:t>3</a:t>');
+  expect(strFromU8(updated['ppt/slides/slide4.xml'])).toContain('<a:t>4</a:t>');
+});
+
+test('Delete removes a selected comment from its card or pin and supports undo', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('[data-action=comments]').click();
+  const input = page.getByRole('textbox', { name: 'Comment', exact: true });
+  await input.fill('Review this point');
+  await page.getByRole('button', { name: 'Post', exact: true }).click();
+  const card = page.locator('.comment-card');
+  const pin = page.locator('.comment-pin');
+  await card.getByText('Review this point').click();
+  await expect(card).toHaveClass(/focused/);
+  await page.keyboard.press('Delete');
+  await expect(card).toHaveCount(0);
+  await expect(pin).toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(card).toHaveCount(1);
+  await pin.click();
+  await expect(pin).toBeFocused();
+  await page.keyboard.press('Backspace');
+  await expect(card).toHaveCount(0);
+  await expect(page.locator('#slide-counter')).toHaveText('Slide 1 / 1');
 });
 
 test('Dragging navigator slides uses a bounded preview of the moving selection', async ({

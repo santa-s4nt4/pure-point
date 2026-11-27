@@ -102,17 +102,17 @@ test('The Script separator and font controls resize the notes view', async ({ pa
 
   const decrease = page.getByRole('button', { name: 'Decrease script font size' });
   const increase = page.getByRole('button', { name: 'Increase script font size' });
-  await expect(notes).toHaveCSS('font-size', '13px');
+  await expect(notes).toHaveCSS('font-size', '24px');
   await decrease.click();
-  await expect(notes).toHaveCSS('font-size', '12px');
+  await expect(notes).toHaveCSS('font-size', '23px');
   await increase.click();
   await increase.click();
-  await expect(notes).toHaveCSS('font-size', '14px');
+  await expect(notes).toHaveCSS('font-size', '25px');
   await expect(page.locator('#status')).toHaveText('Not saved yet');
 
   await page.reload();
   await toggle.click();
-  await expect(notes).toHaveCSS('font-size', '14px');
+  await expect(notes).toHaveCSS('font-size', '25px');
   expect((await panel.boundingBox()).height).toBeCloseTo(expanded.height - 12, 0);
 });
 

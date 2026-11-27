@@ -1,3 +1,5 @@
+use tauri::AppHandle;
+
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
@@ -5,7 +7,6 @@ use std::{
     thread,
     time::Duration,
 };
-use tauri::AppHandle;
 
 struct PlayerHost {
     address: SocketAddr,
@@ -20,16 +21,12 @@ fn video_id(value: &str) -> bool {
             .all(|v| v.is_ascii_alphanumeric() || matches!(v, b'-' | b'_'))
 }
 
-// In a tauri:// WebView WebKit strips the HTTP referrer YouTube requires.
-// Serve only this player's fixed HTML on loopback so WebKit supplies a real
-// origin, and identify the embedding application with widget_referrer.
-fn player_response(id: &str, app_id: &str) -> String {
-    format!(
-        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YouTube video</title><style>html,body,iframe{{border:0;margin:0;width:100%;height:100%;overflow:hidden;background:#191b20}}</style></head><body><iframe title="YouTube video" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen src="https://www.youtube.com/embed/{id}?autoplay=1&amp;playsinline=1&amp;widget_referrer=https%3A%2F%2F{app_id}%2F"></iframe></body></html>"#
-    )
-}
+const PLAYER_PAGE: &str = include_str!("../../public/youtube-player.html");
+const PLAYER_SCRIPT: &str = include_str!("../../public/youtube-player.js");
 
-fn respond(mut stream: TcpStream, host: &str, token: &str, app_id: &str) -> std::io::Result<()> {
+// Serve just the player and its adapter on a tokenized loopback route. WebKit
+// suppresses the HTTP Referer when the parent uses the app's custom scheme.
+fn respond(mut stream: TcpStream, host: &str, token: &str) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
     let mut reader = BufReader::new((&stream).take(8192));
@@ -38,10 +35,7 @@ fn respond(mut stream: TcpStream, host: &str, token: &str, app_id: &str) -> std:
     let mut request = line.split_whitespace();
     let method = request.next().unwrap_or("");
     let path = request.next().unwrap_or("");
-    let id = path
-        .strip_prefix(token)
-        .and_then(|p| p.strip_prefix('/'))
-        .filter(|id| video_id(id));
+    let resource = path.strip_prefix(token).and_then(|p| p.strip_prefix('/'));
     let mut local = false;
     let mut header = String::new();
     loop {
@@ -55,15 +49,16 @@ fn respond(mut stream: TcpStream, host: &str, token: &str, app_id: &str) -> std:
             }
         }
     }
-    let (status, body) = match (method, local, id) {
-        ("GET", true, Some(id)) => ("200 OK", player_response(id, app_id)),
-        _ => ("404 Not Found", String::new()),
+    let (status, mime, body) = match (method, local, resource) {
+        ("GET", true, Some("youtube-player.js")) => ("200 OK", "text/javascript", PLAYER_SCRIPT),
+        ("GET", true, Some(id)) if video_id(id) => ("200 OK", "text/html", PLAYER_PAGE),
+        _ => ("404 Not Found", "text/plain", ""),
     };
-    write!(stream,"HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len())?;
+    write!(stream,"HTTP/1.1 {status}\r\nContent-Type: {mime}; charset=utf-8\r\nCache-Control: no-store\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'; script-src 'self' https://www.youtube.com https://s.ytimg.com; style-src 'unsafe-inline'; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len())?;
     Ok(())
 }
 
-fn start(app_id: String) -> Result<PlayerHost, String> {
+fn start() -> Result<PlayerHost, String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
     let address = listener.local_addr().map_err(|e| e.to_string())?;
     let mut bytes = [0u8; 16];
@@ -75,7 +70,7 @@ fn start(app_id: String) -> Result<PlayerHost, String> {
         .spawn(move || {
             let host = address.to_string();
             for socket in listener.incoming().flatten() {
-                let _ = respond(socket, &host, &route, &app_id);
+                let _ = respond(socket, &host, &route);
             }
         })
         .map_err(|e| e.to_string())?;
@@ -91,10 +86,16 @@ pub fn youtube_player_url(app: AppHandle, id: String) -> Result<String, String> 
         .lock()
         .map_err(|_| "Unable to initialize the video player.")?;
     if slot.is_none() {
-        *slot = Some(start(app.config().identifier.clone())?);
+        *slot = Some(start()?);
     }
     let host = slot.as_ref().unwrap();
-    Ok(format!("http://{}{}/{}", host.address, host.token, id))
+    Ok(format!(
+        "http://{}{}/{}#app={}",
+        host.address,
+        host.token,
+        id,
+        app.config().identifier
+    ))
 }
 
 #[cfg(test)]
@@ -102,10 +103,15 @@ mod tests {
     use super::*;
     #[test]
     fn serves_only_valid_video_urls_on_the_local_origin() {
-        let host = start("studio.puretools.pure-point".into()).unwrap();
+        let host = start().unwrap();
         for (path, authority, status) in [
             (
                 format!("{}/M7lc1UVf-VE", host.token),
+                host.address.to_string(),
+                "200",
+            ),
+            (
+                format!("{}/youtube-player.js", host.token),
                 host.address.to_string(),
                 "200",
             ),
@@ -122,7 +128,9 @@ mod tests {
             socket.read_to_string(&mut response).unwrap();
             assert!(response.starts_with(&format!("HTTP/1.1 {status}")));
             if status == "200" {
-                assert!(response.contains("https://www.youtube.com/embed/M7lc1UVf-VE"));
+                assert!(
+                    response.contains("youtube-player.js") || response.contains("window.YT.Player")
+                );
             }
         }
     }

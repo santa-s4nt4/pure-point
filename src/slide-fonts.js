@@ -3,7 +3,7 @@ import { pageNumberFont } from './page-numbers.js';
 import { loadTypeface, native } from './platform.js';
 import { japaneseSubstitute } from './text-runs.js';
 
-export function loadSlideFonts(slide, fonts) {
+export function loadSlideFonts(slide, fonts, numbered = false) {
   if (!native || !fonts.length) return;
   const names = new Map();
   function collect(o) {
@@ -39,7 +39,7 @@ export function loadSlideFonts(slide, fonts) {
   }
   slide.items.forEach(visit);
   slide.back.forEach(visit);
-  if (slide.showPageNumber) collect({ font: pageNumberFont });
+  if (numbered) collect({ font: pageNumberFont });
   for (const [font, bold, italic] of names.values())
     loadTypeface(font, fonts, bold, italic);
 }

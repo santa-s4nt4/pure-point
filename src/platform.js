@@ -73,6 +73,9 @@ export async function openPackage() {
   } finally {
     URL.revokeObjectURL(url);
   }
+  return decodeWebPackage(bytes, params.get('name') || 'untitled.pptx');
+}
+async function decodeWebPackage(bytes, path) {
   const { unzipSync, strFromU8 } = await import('fflate');
   const raw = unzipSync(new Uint8Array(bytes)),
     parts = { xml: {}, media: {} };
@@ -82,7 +85,7 @@ export async function openPackage() {
       parts.media[k] = await toData(new Blob([v], { type: mediaMime(k) }));
     }
   }
-  return { path: params.get('name') || 'untitled.pptx', id: null, parts, raw };
+  return { path, id: null, parts, raw };
 }
 export async function savePackage(base, path, name, changes) {
   if (native)
@@ -145,10 +148,11 @@ export async function release(
 }
 export const dirtyFlag = (dirty) =>
   native ? invoke('set_dirty', { dirty }) : Promise.resolve();
-export async function openWindow(pick) {
-  if (native) return invoke('new_document_window', { pick });
+export async function openWindow(pick, reuse = false) {
+  if (native) return invoke('new_document_window', { pick, reuse });
   const file = pick && (await pickFile('.pptx'));
   if (pick && !file) return;
+  if (file && reuse) return decodeWebPackage(await file.arrayBuffer(), file.name);
   const url = new URL(location.href);
   const blob = file && URL.createObjectURL(file);
   url.hash = file

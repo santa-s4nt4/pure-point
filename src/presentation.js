@@ -6,6 +6,7 @@ import { native, fullScreen, getFonts } from './platform.js';
 import { loadSlideFonts } from './slide-fonts.js';
 import { el, icon, itemNode, scene } from './view.js';
 import { pageNumberItem } from './page-numbers.js';
+import { applyPlayback, disposePlayback, replaceLiveItem, replaceLiveScene } from './playback.js';
 import './style.css';
 import './vector.css';
 
@@ -20,11 +21,11 @@ export function presentationControl(snapshot, move) {
   const label = owner && prefix + owner.label;
   let popup, listening;
   let connected = false, scheduled = false, sending = false, pending = false;
-  let lastFrame = '', lastAssets = new Map();
+  let lastFrame = '', lastPlayback = '', lastAssets = new Map();
 
   function handshake() {
     connected = true;
-    lastFrame = '';
+    lastFrame = lastPlayback = '';
     lastAssets.clear();
     publish();
   }
@@ -38,6 +39,8 @@ export function presentationControl(snapshot, move) {
     });
     window.addEventListener('pagehide', () => popup?.close());
   }
+
+  document.addEventListener('video-playback', publish);
 
   async function open() {
     if (owner) {
@@ -71,7 +74,7 @@ export function presentationControl(snapshot, move) {
       scheduled = false;
       pending = false;
       if (!connected || (!owner && popup?.closed)) return;
-      const { assets, ...frame } = snapshot();
+      const { assets, playback, ...frame } = snapshot();
       const signature = JSON.stringify(frame);
       const current = new Map();
       if (frame.slide)
@@ -81,16 +84,19 @@ export function presentationControl(snapshot, move) {
         });
       const media = [...current].filter(([path, asset]) => lastAssets.get(path) !== asset);
       const removed = [...lastAssets.keys()].filter((path) => !current.has(path));
-      if (signature === lastFrame && !media.length && !removed.length) return;
-      const payload = { ...frame, media, removed };
+      const designChanged = signature !== lastFrame || media.length || removed.length;
+      const playbackSignature = JSON.stringify(playback);
+      if (!designChanged && playbackSignature === lastPlayback) return;
+      const payload = designChanged ? { ...frame, media, removed, playback } : { playback };
       lastFrame = signature;
+      lastPlayback = playbackSignature;
       lastAssets = current;
       sending = true;
       try {
         if (owner) await emitTo(label, update, payload);
         else popup.postMessage({ type: update, payload }, location.origin);
       } catch (error) {
-        lastFrame = '';
+        lastFrame = lastPlayback = '';
         lastAssets.clear();
         console.warn('Could not update the presentation:', error);
       } finally {
@@ -184,20 +190,27 @@ export async function startPresentation() {
   }
   new ResizeObserver(sizeFrame).observe(host);
   function draw(next) {
-    const { slide, w, h, number, media, removed } = next;
+    const { slide, w, h, number, media, removed, playback } = next;
+    if (!Object.hasOwn(next, 'slide')) {
+      applyPlayback(frame.firstElementChild, playback);
+      return;
+    }
     for (const path of removed) delete assets[path];
     for (const [path, value] of media) assets[path] = value;
-    if (!slide) frame.replaceChildren();
+    if (!slide) {
+      disposePlayback(frame.firstElementChild);
+      frame.replaceChildren();
+    }
     else {
-      if (fonts) loadSlideFonts(slide, fonts);
+      if (fonts) loadSlideFonts(slide, fonts, Boolean(number));
       const previous = snapshot?.slide;
       const layers = [...slide.back, ...slide.items];
       const previousLayers = previous && [...previous.back, ...previous.items];
       if (!previous || previous.id !== slide.id || snapshot.w !== w || snapshot.h !== h ||
           layers.length !== previousLayers.length ||
           layers.some((item, i) => item.id !== previousLayers[i].id)) {
-        frame.replaceChildren(scene(slide, { w, h }, assets, 'present', false,
-          new Map([[slide.id, number]])));
+        replaceLiveScene(frame, scene(slide, { w, h }, assets, 'present', false,
+          new Map([[slide.id, number]])), slide.id);
       } else {
         const board = frame.firstElementChild;
         const changedMedia = new Set([...media.map(([path]) => path), ...removed]);
@@ -208,12 +221,12 @@ export async function startPresentation() {
             mediaReferences([item], (object, key) => { mediaChanged ||= changedMedia.has(object[key]); });
           // Keep unchanged media players mounted while editing other layers.
           if (mediaChanged || JSON.stringify(item) !== JSON.stringify(previousLayers[i]))
-            board.children[i].replaceWith(itemNode(item, assets, i >= slide.back.length && 'present'));
+            replaceLiveItem(board.children[i], itemNode(item, assets, i >= slide.back.length && 'present'));
         });
-        if (snapshot.number !== number) {
+        if (snapshot.number !== number || previous.bg !== slide.bg) {
           board.querySelector('.slide-page-number')?.remove();
           if (number) {
-            const label = itemNode(pageNumberItem({ w, h }, number), assets);
+            const label = itemNode(pageNumberItem({ w, h }, number, slide.bg), assets);
             label.classList.add('slide-page-number');
             board.append(label);
           }
@@ -222,6 +235,7 @@ export async function startPresentation() {
     }
     snapshot = next;
     sizeFrame();
+    applyPlayback(frame.firstElementChild, playback);
   }
   if (viewer && owner) {
     await viewer.listen(update, ({ payload }) => draw(payload));
@@ -231,7 +245,7 @@ export async function startPresentation() {
     await send(ready);
     getFonts().then((faces) => {
       fonts = faces;
-      if (snapshot?.slide) loadSlideFonts(snapshot.slide, fonts);
+      if (snapshot?.slide) loadSlideFonts(snapshot.slide, fonts, Boolean(snapshot.number));
     }).catch(console.warn);
   } else if (opener) {
     window.addEventListener('message', (event) => {

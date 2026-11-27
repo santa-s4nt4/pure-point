@@ -40,7 +40,8 @@ import { relationships } from './import.js';
 import { replaceRunText, updateText } from './text.js';
 import { hasTextFrame, slideSizes } from './model.js';
 import {
-  isPageNumberShape, pageNumberItem, pageNumbers,
+  isPageNumberShape, pageNumberColor, pageNumberItem, pageNumbers,
+  readPageNumberLabel, writePageNumberSetting,
 } from './page-numbers.js';
 import { sameSlideSize } from './slide-size.js';
 import { template, slideType } from './template.js';
@@ -495,7 +496,7 @@ export function exportDeck(deck, base, assets = {}) {
     size.removeAttribute('type');
   }
   const numbers = pageNumbers(deck);
-  const previousNumbers = base && pageNumbers(base.deck);
+  const settingChanged = writePageNumberSetting(pres, deck.showPageNumbers);
   const order = [];
   const detachedMedia = new Set();
   let sequence = Math.max(
@@ -523,12 +524,19 @@ export function exportDeck(deck, base, assets = {}) {
   for (const s of deck.slides) {
     const old = base?.deck.slides.find((x) => x.id === (s.copyOf || s.id));
     const pageNumber = numbers.get(s.id);
+    const priorLabel = base?.pageNumberLabels
+      ? base.pageNumberLabels.get(old?.source)
+      : old?.source && readPageNumberLabel(parse(xml[old.source]));
+    const labelChanged = pageNumber
+      ? resized ||
+        priorLabel?.text !== String(pageNumber) ||
+        priorLabel?.color !== pageNumberColor(s.bg)
+      : Boolean(priorLabel);
     if (s.relId) order.push(s.relId);
     if (
       old &&
       !base.slidesToRepair?.has(old.source) &&
-      (!resized || !s.showPageNumber) &&
-      pageNumber === previousNumbers.get(old.id) &&
+      !labelChanged &&
       JSON.stringify(s) === JSON.stringify(old)
     )
       continue;
@@ -657,12 +665,10 @@ export function exportDeck(deck, base, assets = {}) {
     const previousLabels = children(tree).filter(isPageNumberShape);
     const labelId = attr(desc(previousLabels[0], 'cNvPr'), 'id') || id + 1;
     previousLabels.forEach((node) => node.remove());
-    if (s.showPageNumber) {
+    if (pageNumber) {
       const label = fragment(
-        doc, shapeXML(pageNumberItem(deck, pageNumber), labelId)
+        doc, shapeXML(pageNumberItem(deck, pageNumber, s.bg), labelId)
       );
-      // Retain the toggle in a hidden slide without displaying a page number.
-      if (!pageNumber) desc(label, 'cNvPr').setAttribute('hidden', '1');
       tree.insertBefore(label, child(tree, 'extLst') || null);
     }
     pictures.finish(detachedMedia);
@@ -699,7 +705,7 @@ export function exportDeck(deck, base, assets = {}) {
     for (const id of order) if (nodes.has(id)) list.appendChild(nodes.get(id));
     structure = true;
   }
-  if (structure || resized) changes.xml[presPath] = serialize(pres);
+  if (structure || resized || settingChanged) changes.xml[presPath] = serialize(pres);
   if (structure) changes.xml[relfile(presPath)] = serialize(pr);
   if (deleted.length) {
     // Links and notes may point back to a deleted slide. Drop those references,

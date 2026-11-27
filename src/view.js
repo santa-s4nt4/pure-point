@@ -225,7 +225,7 @@ export function itemNode(o, assets, interactive = false, deferImages = false) {
     transform: `rotate(${o.rotation}deg) scale(${o.flipH ? -1 : 1},${o.flipV ? -1 : 1})`,
   });
   if (o.kind === 'video') {
-    n.append(videoNode(o, assets, Boolean(interactive), deferImages));
+    n.append(videoNode(o, assets, interactive, deferImages));
   } else if (o.kind === 'image') {
     const clip = el('div', 'image-clip'),
       img = el('img');
@@ -391,10 +391,9 @@ export function scene(
   for (const o of slide.back) n.append(itemNode(o, assets, false, deferImages));
   for (const o of slide.items)
     n.append(itemNode(o, assets, interactive, deferImages));
-  const number =
-    slide.showPageNumber && (numbers || pageNumbers(deck)).get(slide.id);
+  const number = !slide.hidden && (numbers || pageNumbers(deck)).get(slide.id);
   if (number) {
-    const label = itemNode(pageNumberItem(deck, number), assets);
+    const label = itemNode(pageNumberItem(deck, number, slide.bg), assets);
     label.classList.add('slide-page-number');
     n.append(label);
   }

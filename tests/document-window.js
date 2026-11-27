@@ -5,16 +5,22 @@ export async function openFileWindow(
   file,
   open = () => page.keyboard.press('ControlOrMeta+o')
 ) {
-  const [picker] = await Promise.all([
+  const status = page.locator('#status');
+  const [picker, reuse] = await Promise.all([
     page.waitForEvent('filechooser'),
     // This renderer round trip lets Chrome enable file chooser interception
     // before the keyboard shortcut, and waits for the editor to accept it.
-    page
-      .locator('#status')
-      .filter({ hasNotText: 'Working…' })
-      .waitFor()
-      .then(open),
+    status.filter({ hasNotText: 'Working…' }).waitFor().then(async () => {
+      const reuse = (await status.textContent()) === 'Not saved yet';
+      await open();
+      return reuse;
+    }),
   ]);
+  if (reuse) {
+    await picker.setFiles(file);
+    await expect(status).toHaveText('Saved');
+    return page;
+  }
   const [child] = await Promise.all([
     page.waitForEvent('popup'),
     picker.setFiles(file),

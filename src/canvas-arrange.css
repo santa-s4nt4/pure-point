@@ -1,3 +1,27 @@
+.resize-edge {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+}
+.resize-edge[data-handle='n'],
+.resize-edge[data-handle='s'] {
+  left: 0;
+  right: 0;
+  height: min(calc(8 * var(--hair)), 50%);
+  transform: translateY(-50%);
+}
+.resize-edge[data-handle='n'] { top: 0; }
+.resize-edge[data-handle='s'] { top: 100%; }
+.resize-edge[data-handle='w'],
+.resize-edge[data-handle='e'] {
+  top: 0;
+  bottom: 0;
+  width: min(calc(8 * var(--hair)), 50%);
+  transform: translateX(-50%);
+}
+.resize-edge[data-handle='w'] { left: 0; }
+.resize-edge[data-handle='e'] { left: 100%; }
+
 .object-spacing {
   position: absolute;
   background: repeating-linear-gradient(

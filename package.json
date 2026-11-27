@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
+    "@vimeo/player": "2.30.4",
     "fflate": "^0.8.3",
     "lucide": "^1.80.0"
   },

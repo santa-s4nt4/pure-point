@@ -143,8 +143,9 @@ export function slideBrowser(host, { sorter = false, prepareSlide } = {}) {
     const nextLayout = JSON.stringify([
       deck.w,
       deck.h,
+      deck.showPageNumbers,
       deck.sections,
-      deck.slides.map((s) => [s.id, s.sectionId, s.hidden, s.showPageNumber]),
+      deck.slides.map((s) => [s.id, s.sectionId, s.hidden]),
     ]);
     if (
       state?.deck === deck &&
