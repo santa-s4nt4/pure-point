@@ -22,13 +22,14 @@ For a synced file in a recognized Dentsu business account, **Copy link** request
 
 ## Slides and layout
 
-- Switch between the canvas and the slide overview with the controls at the bottom, or the grid button above the thumbnails. Double-click a slide in the overview to edit it. Pinch either view to zoom. The canvas supports up to 1600%, with two-finger scrolling to pan.
+- Switch between the canvas and the slide overview with the controls at the bottom, or the grid button above the thumbnails. Double-click a slide in the overview to edit it. Pinch either view to zoom. Swipe with two fingers to pan the canvas in both directions, including at Fit. Choose **Zoom to fit** to center it again. Objects that extend beyond the slide remain visible while editing. The slide boundary marks where previews, presentations, and PDF exports clip them.
 - The title bar shows the filename and save status. Drag its empty space to move the window, or double-click it to zoom and restore. Its three panel controls show or hide the slide navigator, Script, and the inspector. Drag the navigator’s right divider to resize the thumbnails.
 - Open **Script** to edit the active slide’s speaker notes below the canvas. The panel starts closed.
-- Use **Add slide** in the left slide navigator to choose **title** (centered), **header title** (at the top), or **title and content**. Each choice uses the corresponding layout and editable placeholders from the current slide master. Titles in new slides and new presentations start with 1.5 line spacing.
+- Deselect objects to find **Slide size** in Design. Choose **1920 × 1080 px** or **1350 × 1950 px** for the whole presentation. **Add slide** uses that size and offers **title** (centered), **header title** (at the top), and **title and content**. The layouts adapt to the slide size. Titles in new slides and new presentations start with 1.5 line spacing.
 - With a slide selected, ↑ and ↓ navigate and Delete removes the selected slides. Select a layer to nudge it with the arrow keys.
 - Shift-click a range of slides, or ⌘-click individual slides. Use **⌘C** and **⌘V**, or the thumbnail’s context menu, to copy and paste slides after the selected slides in presentation order. **⌘G** groups the selected slides in a named section. Right-click a thumbnail to move slides into a section, hide them, or delete them. Drag thumbnails to reorder them or drop them on a section. Click a section name to collapse it.
 - Hidden slides remain accessible in both editing views and are skipped in presentations and PDF exports.
+- Use **P** in the footer to show a page number on the active slide. Visible slides with **P** on are numbered in order. Numbers appear at the lower right in Yu Gothic 12 pt and are included in PPTX and PDF exports.
 - Choose a column, row, square, or thirds grid in Design. Set margins, gutters, and spacing. Hold Option while moving objects to temporarily bypass snapping. Drag a numeric label or value in Design to adjust it on the canvas. Use ↑ and ↓ for fine steps, or hold Shift for larger steps.
 
 ## Objects and review

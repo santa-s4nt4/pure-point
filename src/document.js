@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { native, nativeMac, pdfFontStyles } from './platform.js';
+import { pageNumbers } from './page-numbers.js';
 import { scene } from './view.js';
 import editorStyles from './style.css?inline';
 import mediaStyles from './media.css?inline';
@@ -13,8 +14,9 @@ export async function openTemplate() {
 export async function pdfDocument(deck, assets) {
   const slides = deck.slides.filter((s) => !s.hidden);
   if (!slides.length) throw Error('Show at least one slide to export a PDF.');
+  const numbers = pageNumbers(deck);
   const sections = slides.map((slide) => {
-    const paper = scene(slide, deck, assets, false, native);
+    const paper = scene(slide, deck, assets, false, native, numbers);
     // Playback controls and external players do not have a printed representation.
     paper.querySelectorAll('iframe,button,input,video').forEach((n) => {
       if (n.tagName === 'VIDEO' && n.poster) {

@@ -1,4 +1,5 @@
 import { hasTextFrame } from './model.js';
+import { pageNumberItem, pageNumbers } from './page-numbers.js';
 import { presetTextInset } from './shape-presets.js';
 import { bulletList } from './bullets.js';
 import {
@@ -376,7 +377,8 @@ export function scene(
   deck,
   assets,
   interactive = false,
-  deferImages = false
+  deferImages = false,
+  numbers
 ) {
   const n = el('div', 'scene');
   Object.assign(n.style, {
@@ -387,6 +389,13 @@ export function scene(
   for (const o of slide.back) n.append(itemNode(o, assets, false, deferImages));
   for (const o of slide.items)
     n.append(itemNode(o, assets, interactive, deferImages));
+  const number =
+    slide.showPageNumber && (numbers || pageNumbers(deck)).get(slide.id);
+  if (number) {
+    const label = itemNode(pageNumberItem(deck, number), assets);
+    label.classList.add('slide-page-number');
+    n.append(label);
+  }
   return n;
 }
 export function gridOverlay(deck, g) {

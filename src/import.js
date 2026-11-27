@@ -10,6 +10,7 @@ import { readDocumentMetadata } from './document-metadata.js';
 import { readLayerFlags } from './layer-xml.js';
 import { readPictureMedia } from './media-xml.js';
 import { readTable } from './table.js';
+import { isPageNumberShape } from './page-numbers.js';
 import { shape, slide } from './model.js';
 import {
   parse,
@@ -479,8 +480,10 @@ export function readSlidePage({
   };
   const lt = desc(layout, 'spTree'),
     mt = desc(master, 'spTree');
-  const items = children(desc(page, 'spTree'))
+  const nodes = children(desc(page, 'spTree'));
+  const items = nodes
     .map((n, idx) => {
+      if (isPageNumberShape(n)) return null;
       const ln = matchPlaceholder(n, lt);
       return readShape(n, ctx, idx, ln, matchPlaceholder(ln || n, mt));
     })
@@ -496,6 +499,7 @@ export function readSlidePage({
   const name = attr(desc(page, 'cSld'), 'name');
   const s = {
     ...slide(name, bg, items),
+    ...(nodes.some(isPageNumberShape) && { showPageNumber: true }),
     layoutPath,
     themeColors: Object.values(theme.colors)
       .filter((v) => /^[\da-f]{6}$/i.test(v))

@@ -66,9 +66,13 @@ import {
 import { layerPanel, toggleExpanded } from './layer-panel.js';
 import { defaultTextSize, measureTextElement, singleLine } from './text.js';
 import { layoutOptions, setTitleSpacing } from './slide-layouts.js';
+import { resizeDeck, sameSlideSize, slideSizeLabel } from './slide-size.js';
 import { chooseLayout } from './layout-picker.js';
 import { inlineText } from './inline-text.js';
-import { blankDeck, hasTextFrame, slide, textItem, uid } from './model.js';
+import {
+  blankDeck, designUnit, hasTextFrame, slide, slideSizes, textItem, uid,
+} from './model.js';
+import { pageNumberFont } from './page-numbers.js';
 import { importDeck } from './import.js';
 import { japaneseSubstitute, objectDecoration, runFontFor } from './text-runs.js';
 import { exportDeck } from './export.js';
@@ -102,6 +106,7 @@ let tool = 'pointer',
   present = false,
   editor = null,
   cropEdit = null;
+let panOrigin = null;
 let numberAdjustment = null;
 let history = [],
   future = [],
@@ -120,10 +125,10 @@ const root = $('#app');
 document.body.classList.toggle('native-mac', platform.nativeMac);
 root.innerHTML = workspace(action);
 bindAppearance($('#appearance'));
-const designUnit = 2;
 const commentDrafts = new Map();
 const scriptField = $('#slide-script');
 const shareButton = $('[data-action="copyShareLink"]');
+const pageNumberButton = $('[data-action="pageNumber"]');
 let shareMode = 'none';
 let sharingPath = null;
 let scriptOpen = false,
@@ -342,7 +347,12 @@ function restore(from, to) {
   const snap = from.pop();
   if (!snap) return;
   to.push(snapshot());
-  deck = JSON.parse(snap.deck);
+  const restored = JSON.parse(snap.deck);
+  if (!sameSlideSize(deck, restored)) {
+    zoom = 'fit';
+    panOrigin = null;
+  }
+  deck = restored;
   index = snap.index;
   setSelection(
     [...(snap.additionalSelection || []), snap.selection].filter(Boolean)
@@ -381,6 +391,7 @@ function status() {
   $('#slide-counter').textContent = overview
     ? deck.slides.length + ' slides'
     : `Slide ${index + 1} / ${deck.slides.length}`;
+  pageNumberButton.setAttribute('aria-pressed', Boolean(active().showPageNumber));
   document
     .querySelectorAll('[data-action="undo"]')
     .forEach((b) => (b.disabled = !history.length));
@@ -476,6 +487,7 @@ function chooseZoom(value) {
       $('.sorter').style.setProperty('--tile-width', '216px');
     } else {
       zoom = 'fit';
+      panOrigin = null;
       sizing();
     }
     updateZoomLabel();
@@ -566,37 +578,40 @@ function sizing() {
   const vp = $('.viewport'),
     world = $('.world'),
     css = getComputedStyle(world);
-  const availableW =
-      vp.clientWidth -
-      parseFloat(css.paddingLeft) -
-      parseFloat(css.paddingRight),
-    availableH =
-      vp.clientHeight -
-      parseFloat(css.paddingTop) -
-      parseFloat(css.paddingBottom);
+  const viewWidth = vp.clientWidth,
+    viewHeight = vp.clientHeight;
+  const horizontalPadding = parseFloat(css.paddingLeft) + parseFloat(css.paddingRight),
+    verticalPadding = parseFloat(css.paddingTop) + parseFloat(css.paddingBottom);
+  const availableW = viewWidth - horizontalPadding,
+    availableH = viewHeight - verticalPadding;
   scale =
     zoom === 'fit'
       ? Math.max(0.01, Math.min(availableW / deck.w, availableH / deck.h))
       : Number(zoom) * designUnit;
   const w = deck.w * scale,
     h = deck.h * scale;
+  // Leave room to scroll on both axes at every zoom, even when the slide fits.
+  // Preserve native trackpad inertia and the user's offset from the center.
+  const worldWidth = Math.max(viewWidth, w + horizontalPadding) + 2 * viewWidth,
+    worldHeight = Math.max(viewHeight, h + verticalPadding) + 2 * viewHeight;
+  const origin = {
+    x: Math.round((worldWidth - viewWidth) / 2),
+    y: Math.round((worldHeight - viewHeight) / 2),
+  };
+  const panX = panOrigin ? vp.scrollLeft - panOrigin.x : 0,
+    panY = panOrigin ? vp.scrollTop - panOrigin.y : 0;
   Object.assign($('.artboard').style, { width: w + 'px', height: h + 'px' });
-  world.style.width =
-    Math.max(
-      vp.clientWidth,
-      w + parseFloat(css.paddingLeft) + parseFloat(css.paddingRight)
-    ) + 'px';
-  world.style.height =
-    Math.max(
-      vp.clientHeight,
-      h + parseFloat(css.paddingTop) + parseFloat(css.paddingBottom)
-    ) + 'px';
+  world.style.width = worldWidth + 'px';
+  world.style.height = worldHeight + 'px';
   const sc = $('.artboard .scene');
   if (sc) {
     // Lay out at the display scale so WebKit paints live text at that size.
     sc.style.zoom = scale;
     sc.style.setProperty('--hair', 1 / scale + 'px');
   }
+  vp.scrollLeft = origin.x + panX;
+  vp.scrollTop = origin.y + panY;
+  panOrigin = origin;
   editor?.paintCaret();
   updateZoomLabel();
   $('.page-label').textContent = 'Slide ' + (index + 1);
@@ -997,16 +1012,16 @@ function properties() {
     return;
   }
   if (!o) {
-    const ratio =
-      Math.abs(deck.w / deck.h - 16 / 9) < 0.01
-        ? '16:9'
-        : Math.abs(deck.w / deck.h - 4 / 3) < 0.01
-          ? '4:3'
-          : '';
+    const currentSize = slideSizes.findIndex((size) => sameSlideSize(deck, size));
+    const sizes = slideSizes.map((size, i) =>
+      `<option value="${i}"${i === currentSize ? ' selected' : ''}>${slideSizeLabel(size)}</option>`
+    );
+    if (currentSize < 0)
+      sizes.unshift(`<option value="custom" selected disabled>${slideSizeLabel(deck)}</option>`);
     container.innerHTML =
       section(
         'Slide',
-        `<div class="property"><span>Size ${ratio ? '(' + ratio + ')' : ''}</span><strong>${Math.round(deck.w * designUnit)} × ${Math.round(deck.h * designUnit)} px</strong></div>${swatch('Background', active().bg, 'bg')}`
+        `<label class="field">Slide size<select id="slide-size" title="Applies to all slides">${sizes.join('')}</select></label>${swatch('Background', active().bg, 'bg')}`
       ) + gridPanel();
   } else {
     const fields =
@@ -1138,6 +1153,7 @@ function loadSlideFonts(slide) {
   }
   slide.items.forEach(visit);
   slide.back.forEach(visit);
+  if (slide.showPageNumber) collect({ font: pageNumberFont });
   for (const [font, bold, italic] of names.values())
     platform.loadTypeface(font, fonts, bold, italic);
 }
@@ -1722,6 +1738,7 @@ function reset(next, nextBase, nextTitle, nextPath) {
   index = 0;
   tool = 'pointer';
   zoom = 'fit';
+  panOrigin = null;
   tab = 'design';
   render();
   platform.release(previous, previousAssets);
@@ -2321,6 +2338,14 @@ async function execute(id, button) {
     $('.select-slide.active')?.scrollIntoView({ block: 'nearest' });
     return;
   }
+  if (id === 'pageNumber') {
+    change(() => {
+      const s = active();
+      if (s.showPageNumber) delete s.showPageNumber;
+      else s.showPageNumber = true;
+    });
+    return;
+  }
   if (id.startsWith('objectAlign-')) {
     const moves = alignmentMoves(
       selectedEntries(),
@@ -2607,6 +2632,16 @@ document.addEventListener('change', (e) => {
   }
   if (input.id === 'zoom') {
     chooseZoom(input.value);
+    return;
+  }
+  if (input.id === 'slide-size') {
+    const size = slideSizes[Number(input.value)];
+    if (size && !sameSlideSize(deck, size))
+      change(() => {
+        resizeDeck(deck, size);
+        zoom = 'fit';
+        panOrigin = null;
+      });
     return;
   }
   const { field: key, scope, color, font } = input.dataset;

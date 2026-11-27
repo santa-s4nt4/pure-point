@@ -1,4 +1,6 @@
 import { readSlidePage, relationships } from './import.js';
+import { slideSizes } from './model.js';
+import { sameSlideSize, slideFrameResize } from './slide-size.js';
 import { template } from './template.js';
 import {
   P,
@@ -232,8 +234,52 @@ function resolveLayout(xml, masterPath, def, w, h) {
     );
   return match || fallback(xml, masterPath, def, w, h);
 }
-export function layoutPatches(deck, xml) {
+function resizeMasterLayouts(deck, xml, base) {
+  const from = base?.deck || slideSizes[0];
   const changes = {};
+  if (sameSlideSize(deck, from)) return changes;
+  const resize = slideFrameResize(from, deck);
+  const masters = relationships(xml, base?.presPath || 'ppt/presentation.xml')
+    .filter((r) => r.type === 'slideMaster' && xml[r.target])
+    .map((r) => r.target);
+  const parts = new Set(masters);
+  for (const path of masters)
+    for (const rel of relationships(xml, path))
+      if (rel.type === 'slideLayout' && xml[rel.target]) parts.add(rel.target);
+
+  for (const path of parts) {
+    const doc = parse(xml[path]);
+    let changed = false;
+    for (const node of children(desc(doc, 'spTree'))) {
+      if (node.localName === 'grpSpPr') continue;
+      const props = child(node, 'spPr') || child(node, 'grpSpPr');
+      const xf = child(props, 'xfrm') || child(node, 'xfrm');
+      const pos = child(xf, 'off');
+      const ext = child(xf, 'ext');
+      if (!pos || !ext) continue;
+      const frame = resize(
+        {
+          x: Number(attr(pos, 'x')) / 12700,
+          y: Number(attr(pos, 'y')) / 12700,
+          w: Number(attr(ext, 'cx')) / 12700,
+          h: Number(attr(ext, 'cy')) / 12700,
+          rotation: Number(attr(xf, 'rot', 0)),
+        },
+        Boolean(desc(child(node, 'nvSpPr'), 'ph'))
+      );
+      pos.setAttribute('x', emu(frame.x));
+      pos.setAttribute('y', emu(frame.y));
+      ext.setAttribute('cx', emu(frame.w));
+      ext.setAttribute('cy', emu(frame.h));
+      changed = true;
+    }
+    if (changed) changes[path] = serialize(doc);
+  }
+  return changes;
+}
+
+export function layoutPatches(deck, xml, base) {
+  const changes = resizeMasterLayouts(deck, xml, base);
   for (const s of deck.slides) {
     if (!s.generatedLayout || xml[s.layoutPath] || changes[s.layoutPath])
       continue;
@@ -261,7 +307,7 @@ export function setTitleSpacing(slide) {
 export function layoutOptions(base, deck, current) {
   const parts = base?.parts || template(),
     presPath = base?.presPath || 'ppt/presentation.xml';
-  const xml = { ...parts.xml, ...layoutPatches(deck, parts.xml) };
+  const xml = { ...parts.xml, ...layoutPatches(deck, parts.xml, base) };
   const master =
     current.generatedLayout?.master ||
     (current.layoutPath &&

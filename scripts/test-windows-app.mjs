@@ -56,11 +56,19 @@ try {
     await page.keyboard.press('Control+Shift+z');
     await expect(notes).toHaveValue('Windows round trip');
   }
+  await page.getByLabel('Slide size').selectOption({ label: '1350 × 1950 px' });
+  await page.getByRole('button', { name: 'Show page number on this slide' }).click();
+  await expect(page.locator('.artboard .slide-page-number')).toHaveText('1');
   await page.keyboard.press('Control+s');
   await expect.poll(async () => {
     const xml = unzipSync(await readFile(file))['ppt/notesSlides/notesSlide1.xml'];
     return xml && strFromU8(xml);
   }).toContain('Windows round trip');
+  const saved = unzipSync(await readFile(file));
+  expect(strFromU8(saved['ppt/presentation.xml'])).toContain(
+    '<p:sldSz cx="8572500" cy="12382500"'
+  );
+  expect(strFromU8(saved['ppt/slides/slide1.xml'])).toContain('<a:t>1</a:t>');
   await page.keyboard.press('Control+n');
   await expect.poll(() => context.pages().length).toBe(2);
 } finally {

@@ -1,6 +1,11 @@
 export const uid = () => crypto.randomUUID();
 const ink = '#222521';
 export const blue = '#354AE8';
+export const designUnit = 2;
+export const slideSizes = [
+  { w: 1920 / designUnit, h: 1080 / designUnit },
+  { w: 1350 / designUnit, h: 1950 / designUnit },
+];
 export function shape(kind, name, x, y, w, h, props = {}) {
   return {
     id: uid(),
@@ -34,5 +39,5 @@ export function slide(name = '', bg = '#FFFFFF', items = []) {
   return { id: uid(), name, bg, items, back: [], notes: '' };
 }
 export function blankDeck() {
-  return { w: 960, h: 540, slides: [slide('')] };
+  return { ...slideSizes[0], slides: [slide('')] };
 }

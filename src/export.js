@@ -38,7 +38,11 @@ import {
 } from './xml.js';
 import { relationships } from './import.js';
 import { replaceRunText, updateText } from './text.js';
-import { hasTextFrame } from './model.js';
+import { hasTextFrame, slideSizes } from './model.js';
+import {
+  isPageNumberShape, pageNumberItem, pageNumbers,
+} from './page-numbers.js';
+import { sameSlideSize } from './slide-size.js';
 import { template, slideType } from './template.js';
 
 const xfrm = (o) =>
@@ -468,7 +472,8 @@ function patchOriginal(n, o, old, reparented = false) {
 }
 export function exportDeck(deck, base, assets = {}) {
   const original = base?.parts || template();
-  const addedLayouts = layoutPatches(deck, original.xml);
+  const resized = !sameSlideSize(deck, base?.deck || slideSizes[0]);
+  const addedLayouts = layoutPatches(deck, original.xml, base);
   const source = { ...original, xml: { ...original.xml, ...addedLayouts } },
     xml = source.xml;
   const commentNodes = new Map();
@@ -481,6 +486,16 @@ export function exportDeck(deck, base, assets = {}) {
   const list =
     desc(pres, 'sldIdLst') ||
     ensure(pres.documentElement, P, 'p:sldIdLst', desc(pres, 'sldSz'));
+  if (resized) {
+    const size = ensure(
+      pres.documentElement, P, 'p:sldSz', list.nextElementSibling
+    );
+    size.setAttribute('cx', emu(deck.w));
+    size.setAttribute('cy', emu(deck.h));
+    size.removeAttribute('type');
+  }
+  const numbers = pageNumbers(deck);
+  const previousNumbers = base && pageNumbers(base.deck);
   const order = [];
   const detachedMedia = new Set();
   let sequence = Math.max(
@@ -507,10 +522,13 @@ export function exportDeck(deck, base, assets = {}) {
   );
   for (const s of deck.slides) {
     const old = base?.deck.slides.find((x) => x.id === (s.copyOf || s.id));
+    const pageNumber = numbers.get(s.id);
     if (s.relId) order.push(s.relId);
     if (
       old &&
       !base.slidesToRepair?.has(old.source) &&
+      (!resized || !s.showPageNumber) &&
+      pageNumber === previousNumbers.get(old.id) &&
       JSON.stringify(s) === JSON.stringify(old)
     )
       continue;
@@ -636,6 +654,17 @@ export function exportDeck(deck, base, assets = {}) {
         ? (o, node) => commentNodes.set(o.id, { node })
         : null
     );
+    const previousLabels = children(tree).filter(isPageNumberShape);
+    const labelId = attr(desc(previousLabels[0], 'cNvPr'), 'id') || id + 1;
+    previousLabels.forEach((node) => node.remove());
+    if (s.showPageNumber) {
+      const label = fragment(
+        doc, shapeXML(pageNumberItem(deck, pageNumber), labelId)
+      );
+      // Retain the toggle in a hidden slide without displaying a page number.
+      if (!pageNumber) desc(label, 'cNvPr').setAttribute('hidden', '1');
+      tree.insertBefore(label, child(tree, 'extLst') || null);
+    }
     pictures.finish(detachedMedia);
     // Covers older files and imported preset connectors edited into freeforms.
     for (const connector of customConnectors(doc)) {
@@ -670,10 +699,8 @@ export function exportDeck(deck, base, assets = {}) {
     for (const id of order) if (nodes.has(id)) list.appendChild(nodes.get(id));
     structure = true;
   }
-  if (structure) {
-    changes.xml[presPath] = serialize(pres);
-    changes.xml[relfile(presPath)] = serialize(pr);
-  }
+  if (structure || resized) changes.xml[presPath] = serialize(pres);
+  if (structure) changes.xml[relfile(presPath)] = serialize(pr);
   if (deleted.length) {
     // Links and notes may point back to a deleted slide. Drop those references,
     // then remove only parts that became unreachable because of the deletion.

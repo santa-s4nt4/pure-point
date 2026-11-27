@@ -1,5 +1,6 @@
 import { el, icon, scene } from './view.js';
 import { uid } from './model.js';
+import { pageNumbers } from './page-numbers.js';
 
 export function sectionRuns(deck) {
   const runs = [];
@@ -89,7 +90,7 @@ export function slideBrowser(host, { sorter = false, prepareSlide } = {}) {
   function preview(frame, width) {
     const slide = state.deck.slides[Number(frame.dataset.preview)];
     prepareSlide?.(slide);
-    const node = scene(slide, state.deck, state.assets);
+    const node = scene(slide, state.deck, state.assets, false, false, state.numbers);
     node.style.transform = `scale(${width / state.deck.w})`;
     frame.replaceChildren(node);
   }
@@ -143,7 +144,7 @@ export function slideBrowser(host, { sorter = false, prepareSlide } = {}) {
       deck.w,
       deck.h,
       deck.sections,
-      deck.slides.map((s) => [s.id, s.sectionId, s.hidden]),
+      deck.slides.map((s) => [s.id, s.sectionId, s.hidden, s.showPageNumber]),
     ]);
     if (
       state?.deck === deck &&
@@ -158,7 +159,7 @@ export function slideBrowser(host, { sorter = false, prepareSlide } = {}) {
       return;
     }
     const scroll = host.scrollTop;
-    state = { deck, assets };
+    state = { deck, assets, numbers: pageNumbers(deck) };
     layout = nextLayout;
     activeId = null;
     selected.clear();
@@ -224,7 +225,7 @@ export function slideBrowser(host, { sorter = false, prepareSlide } = {}) {
     render,
     highlight,
     dragPreview(event, tile, ids) {
-      const { deck, assets } = state;
+      const { deck, assets, numbers } = state;
       const front = deck.slides[Number(tile.dataset.slide)];
       const selectedIds = new Set(ids);
       const cards = [
@@ -254,7 +255,7 @@ export function slideBrowser(host, { sorter = false, prepareSlide } = {}) {
           top: i * 5 + 'px',
         });
         prepareSlide?.(cards[i]);
-        const content = scene(cards[i], deck, assets);
+        const content = scene(cards[i], deck, assets, false, false, numbers);
         content.style.transform = `scale(${width / deck.w})`;
         card.append(content);
         preview.append(card);

@@ -97,7 +97,7 @@ test('Pinch preserves the canvas point, doubles create editable text, deck size 
   await page.goto('/');
   const art = page.locator('.artboard'),
     stage = page.locator('.stage');
-  await expect(page.getByText('1920 × 1080 px')).toBeVisible();
+  await expect(page.getByLabel('Slide size')).toHaveValue('0');
   const b = await art.boundingBox(),
     x = b.x + b.width * 0.65,
     y = b.y + b.height * 0.55;
@@ -120,6 +120,160 @@ test('Pinch preserves the canvas point, doubles create editable text, deck size 
   await expect(art.locator('.item-text')).toHaveText('Double-click to write');
   await art.locator('.item-text').dblclick({ force: true });
   await expect(entry).toBeVisible();
+});
+
+test('A fitted canvas pans diagonally and reveals overflowing objects', async ({ page }) => {
+  await page.goto('/');
+  const xml = await page.evaluate(async () => {
+    const { blankDeck, shape, textItem } = await import('/src/model.js');
+    const { exportDeck } = await import('/src/export.js');
+    const deck = blankDeck();
+    deck.slides[0].items.push(
+      shape('rect', 'Crosses right edge', 900, 140, 90, 70, { fill: '#354AE8' }),
+      textItem('Outside the slide', -30, 60, 100, 25, 12, { noWrap: true })
+    );
+    return exportDeck(deck).xml;
+  });
+  page = await openFileWindow(page, {
+    name: 'overflow.pptx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    buffer: Buffer.from(zipSync(Object.fromEntries(
+      Object.entries(xml).map(([k, v]) => [k, strToU8(v)])
+    ))),
+  });
+  const board = page.locator('.artboard');
+  const before = await board.boundingBox();
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+  await page.mouse.wheel(120, -85);
+  await expect.poll(async () => (await board.boundingBox()).x).toBeLessThan(before.x - 50);
+  await expect.poll(async () => (await board.boundingBox()).y).toBeGreaterThan(before.y + 50);
+  expect((await board.boundingBox()).width).toBeCloseTo(before.width);
+  await page.locator('footer [data-action=fit]').click();
+  const fitted = await board.boundingBox();
+  expect(fitted.x).toBeCloseTo(before.x);
+  expect(fitted.y).toBeCloseTo(before.y);
+  expect(await board.evaluate((node) => {
+    const bounds = node.getBoundingClientRect();
+    return [...node.querySelectorAll('.scene > [data-id]')].map((item) => {
+      const box = item.getBoundingClientRect();
+      const x = box.x < bounds.left ? box.x + 5 : box.right - 5;
+      return document.elementFromPoint(x, box.y + box.height / 2)?.closest('[data-id]') === item;
+    });
+  })).toEqual([true, true]);
+  await expect(page.locator('.thumbs .scene').first()).toHaveCSS('overflow', 'hidden');
+});
+
+test('Portrait layouts and selected page numbers survive save and reopen', async ({ page }, info) => {
+  await page.goto('/');
+  const xml = await page.evaluate(async () => {
+    const { blankDeck, shape } = await import('/src/model.js');
+    const { layoutOptions } = await import('/src/slide-layouts.js');
+    const { exportDeck } = await import('/src/export.js');
+    const { desc, parse, serialize } = await import('/src/xml.js');
+    const deck = blankDeck();
+    deck.slides = [layoutOptions(null, deck, deck.slides[0])[0].slide];
+    deck.slides[0].items.push(
+      shape('ellipse', 'Master decoration', 890, 470, 50, 50, { fill: '#354AE8' })
+    );
+    const { xml } = exportDeck(deck);
+    const slidePath = 'ppt/slides/slide1.xml',
+      masterPath = 'ppt/slideMasters/slideMaster1.xml';
+    const slide = parse(xml[slidePath]), master = parse(xml[masterPath]);
+    desc(master, 'spTree').append(desc(slide, 'spTree').lastElementChild);
+    xml[slidePath] = serialize(slide);
+    xml[masterPath] = serialize(master);
+    return xml;
+  });
+  page = await openFileWindow(page, {
+    name: 'master-layout.pptx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    buffer: Buffer.from(zipSync(Object.fromEntries(
+      Object.entries(xml).map(([part, value]) => [part, strToU8(value)])
+    ))),
+  });
+  const size = page.getByLabel('Slide size');
+  const numberButton = page.getByRole('button', { name: 'Show page number on this slide' });
+  const pageNumber = page.locator('.artboard .slide-page-number');
+  const title = page.locator('.artboard .empty-placeholder').first();
+  const decoration = page.locator('.artboard .scene > .item:not([data-id], .slide-page-number)');
+  const top = () => title.evaluate((node) => parseFloat(node.style.top));
+  const landscapeTop = await top();
+  const numberFormat = () => pageNumber.evaluate((node) => {
+    const text = node.querySelector('.item-text');
+    return {
+      x: 2 * (parseFloat(node.style.left) + parseFloat(node.style.width)),
+      y: 2 * parseFloat(node.style.top),
+      size: text.style.fontSize,
+      align: text.style.textAlign,
+      font: text.style.fontFamily,
+    };
+  });
+  await numberButton.click();
+  await expect(pageNumber).toHaveText('1');
+  expect(await numberFormat()).toMatchObject({ x: 1895, y: 1040, size: '12px', align: 'right', font: expect.stringContaining('Yu Gothic') });
+  await size.selectOption({ label: '1350 × 1950 px' });
+  const portraitTop = await top();
+  expect(portraitTop / 975).toBeCloseTo(landscapeTop / 540, 5);
+  const decorationFrame = () => decoration.evaluate((node) =>
+    ['left', 'top', 'width', 'height'].map((key) => parseFloat(node.style[key]))
+  );
+  const portraitFrame = await decorationFrame();
+  expect(portraitFrame[2]).toBeCloseTo(portraitFrame[3]);
+  expect(portraitFrame[1] + portraitFrame[3]).toBeGreaterThan(900);
+  expect(await numberFormat()).toMatchObject({ x: 1325, y: 1910 });
+  const rail = page.locator('.rail');
+  for (let i = 0; i < 3; i++) {
+    await rail.getByRole('button', { name: 'Add slide', exact: true }).click();
+    await page.getByRole('button', { name: 'title', exact: true }).click();
+    await expect(size).toHaveValue('1');
+    expect(await top()).toBeCloseTo(portraitTop, 3);
+    await expect(numberButton).toHaveAttribute('aria-pressed', 'false');
+    if (i > 0) await numberButton.click();
+  }
+  await expect(pageNumber).toHaveText('3');
+  await rail.locator('[data-hide-slide="2"]').click({ force: true });
+  await expect(pageNumber).toHaveText('2');
+  const output = info.outputPath('portrait.pptx');
+  page = await saveAndReopen(page, output);
+  await expect(page.getByLabel('Slide size')).toHaveValue('1');
+  const numbers = page.locator('.artboard .slide-page-number');
+  const restoredFrame = await page.locator('.artboard .scene > .item').first().evaluate((node) =>
+    ['left', 'top', 'width', 'height'].map((key) => parseFloat(node.style[key]))
+  );
+  restoredFrame.forEach((value, index) => expect(value).toBeCloseTo(portraitFrame[index], 3));
+  for (const [index, value] of ['1', '', '', '2'].entries()) {
+    await page.locator(`.rail [data-slide="${index}"]`).click();
+    if (value) await expect(numbers).toHaveText(value);
+    else await expect(numbers).toHaveCount(0);
+  }
+  await page.locator('.rail [data-hide-slide="2"]').click({ force: true });
+  await expect(numbers).toHaveText('3');
+  const parts = unzipSync(await readFile(output));
+  const presentation = strFromU8(parts['ppt/presentation.xml']);
+  expect(presentation).toContain('<p:sldSz cx="8572500" cy="12382500"');
+  const fourth = strFromU8(parts['ppt/slides/slide4.xml']);
+  expect(fourth).toContain('<a:t>2</a:t>');
+  expect(fourth).toContain('<a:off x="7651750" y="12128500"');
+  expect(fourth).toContain('<a:latin typeface="Yu Gothic"');
+  expect(fourth).toContain('sz="1200"');
+  expect(fourth).not.toContain('NaN');
+  expect(strFromU8(parts['ppt/slides/slide3.xml'])).toContain(
+    'name="pure-point page number" hidden="1"'
+  );
+  const savedXml = Object.fromEntries(Object.entries(parts).map(([part, data]) => [part, strFromU8(data)]));
+  const pdf = await page.evaluate(async (xml) => {
+    const { importDeck } = await import('/src/import.js');
+    const { pdfDocument } = await import('/src/document.js');
+    const { deck } = importDeck({ xml, media: {} });
+    const { html, width, height, count } = await pdfDocument(deck, {});
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    return { width, height, count, labels: [...doc.querySelectorAll('.slide-page-number')].map((n) => n.textContent) };
+  }, savedXml);
+  expect(pdf).toEqual({ width: 675, height: 975, count: 3, labels: ['1', '2'] });
+  const renumbered = info.outputPath('renumbered.pptx');
+  await saveAndReopen(page, renumbered);
+  const updated = unzipSync(await readFile(renumbered));
+  expect(strFromU8(updated['ppt/slides/slide4.xml'])).toContain('<a:t>3</a:t>');
 });
 
 test('Dragging navigator slides uses a bounded preview of the moving selection', async ({
