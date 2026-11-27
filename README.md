@@ -51,7 +51,7 @@ Windows imports the original video and uses WebView2 to generate the poster. Use
 | New / Open | ⌘N / ⌘O | Ctrl+N / Ctrl+O |
 | Save / Save As | ⌘S / ⇧⌘S | Ctrl+S / Ctrl+Shift+S |
 | Export PDF | ⇧⌘E | Ctrl+Shift+E |
-| Undo / Redo | ⌘Z / ⇧⌘Z | Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z |
+| Undo / Redo | ⌘Z / ⇧⌘Z | Ctrl+Z / Ctrl+Shift+Z |
 | Copy / Paste slides or objects | ⌘C / ⌘V | Ctrl+C / Ctrl+V |
 | Group / Ungroup | ⌘G / ⇧⌘G | Ctrl+G / Ctrl+Shift+G |
 | Flip selected objects horizontally | ⇧H (outside text entry) | Shift+H |

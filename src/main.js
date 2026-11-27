@@ -3103,7 +3103,16 @@ $('.stage').addEventListener('dblclick', (e) => {
   } else if (e.target.closest('.artboard')) insertText(coordinates(e));
 });
 document.addEventListener('keydown', (e) => {
-  if (e.isComposing || busy || document.querySelector('dialog[open]')) return;
+  if (e.isComposing) return;
+  // WebView2 also maps Ctrl+Y to redo inside editable fields.
+  if (
+    platform.windows && e.ctrlKey && !e.altKey && !e.metaKey &&
+    !e.shiftKey && e.key.toLowerCase() === 'y'
+  ) {
+    e.preventDefault();
+    return;
+  }
+  if (busy || document.querySelector('dialog[open]')) return;
   const editing = e.target.closest(
       'input,textarea,select,[contenteditable="true"]'
     ),
@@ -3243,13 +3252,12 @@ document.addEventListener('keydown', (e) => {
         o: 'open',
         n: 'new',
         z: e.shiftKey ? 'redo' : 'undo',
-        y: platform.windows && 'redo',
         w: platform.native && 'close',
         e: e.shiftKey && 'pdf',
         p: e.altKey && 'present',
       }[key];
     // The macOS menu handles its own accelerator even while a field has focus.
-    if (id && !platform.nativeMac && !(editing && ['z', 'y'].includes(key))) {
+    if (id && !platform.nativeMac && !(editing && key === 'z')) {
       e.preventDefault();
       run(id);
     }

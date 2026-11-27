@@ -41,9 +41,21 @@ try {
   await expect(page.locator('#status')).toHaveText('Saved', { timeout: 30000 });
   await page.locator('.p-menu').click();
   await expect(page.locator('.menu [data-action=save] kbd')).toHaveText('Ctrl+S');
+  await expect(page.locator('.menu [data-action=redo] kbd')).toHaveText('Ctrl+Shift+Z');
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Toggle script' }).click();
-  await page.getByRole('textbox', { name: 'Slide script' }).fill('Windows round trip');
+  const notes = page.getByRole('textbox', { name: 'Slide script' });
+  await notes.fill('Windows round trip');
+  // Check native text history, then document history outside the text field.
+  for (const target of [notes, page.locator('.p-menu')]) {
+    await target.focus();
+    await page.keyboard.press('Control+z');
+    await expect(notes).toHaveValue('');
+    await page.keyboard.press('Control+y');
+    await expect(notes).toHaveValue('');
+    await page.keyboard.press('Control+Shift+z');
+    await expect(notes).toHaveValue('Windows round trip');
+  }
   await page.keyboard.press('Control+s');
   await expect.poll(async () => {
     const xml = unzipSync(await readFile(file))['ppt/notesSlides/notesSlide1.xml'];
